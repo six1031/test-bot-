@@ -74,6 +74,22 @@ class Database:
             """)
             await conn.execute("""
 
+            CREATE TABLE IF NOT EXISTS guild_settings (
+
+                guild_id BIGINT PRIMARY KEY,
+
+                admin_role BIGINT,
+                marriage_channel BIGINT,
+                relationship_channel BIGINT,
+                ticket_category BIGINT,
+                log_channel BIGINT
+
+             );
+
+             """)
+
+            await conn.execute("""
+
             CREATE TABLE IF NOT EXISTS game_state (
 
                 guild_id BIGINT PRIMARY KEY,
