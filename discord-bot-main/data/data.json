@@ -1,0 +1,21 @@
+{
+    "tasks": [
+        "testing"
+    ],
+    "launch_progress": 0.9,
+    "launch_checklist": {
+        "\ud83c\udfe0 Help Centre": true,
+        "\ud83e\udeaa Verification": true,
+        "\ud83c\udf89 Activities": true,
+        "\ud83d\udce2 Advertising": true,
+        "\ud83d\udc6e Staff Training": false,
+        "\ud83e\udd16 Bots": true,
+        "\ud83c\udfab Tickets": true,
+        "\ud83d\udcac Welcome Screen": true,
+        "\ud83c\udfad Roles": true,
+        "\ud83d\ude80 Server Launch": true
+    },
+    "preferences": {
+        "theme": "Dark"
+    }
+}
