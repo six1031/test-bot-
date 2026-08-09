@@ -186,7 +186,7 @@ class Relationships(commands.Cog):
         )
 
     # --------------------------------------------------
-    # MARRY COMMAND
+    # MARRY COMMAND (UPDATED)
     # --------------------------------------------------
 
     @app_commands.command(
@@ -202,6 +202,26 @@ class Relationships(commands.Cog):
         partner: discord.Member
     ):
 
+        # Load guild settings
+        settings = await self.bot.db.get_guild_settings(interaction.guild.id)
+
+        if not settings or not settings.get("marriage_channel"):
+            return await interaction.response.send_message(
+                "⚠️ The marriage system is not set up yet.\n"
+                "Ask an admin to run `/setup` first.",
+                ephemeral=True
+            )
+
+        marriage_channel_id = settings["marriage_channel"]
+
+        # Enforce channel
+        if interaction.channel.id != marriage_channel_id:
+            return await interaction.response.send_message(
+                f"❌ You must use this command in <#{marriage_channel_id}>.",
+                ephemeral=True
+            )
+
+        # Validation
         if partner.id == interaction.user.id:
             return await interaction.response.send_message(
                 "❌ You cannot marry yourself.",
@@ -226,6 +246,7 @@ class Relationships(commands.Cog):
                 ephemeral=True
             )
 
+        # Send proposal
         view = MarriageProposalView(
             proposer_id=interaction.user.id,
             partner_id=partner.id,
@@ -281,7 +302,7 @@ class Relationships(commands.Cog):
         )
 
     # --------------------------------------------------
-    # TREE COMMAND
+    # TREE COMMAND (UPDATED)
     # --------------------------------------------------
 
     @app_commands.command(
@@ -294,6 +315,25 @@ class Relationships(commands.Cog):
         user: discord.Member = None
     ):
 
+        # Load guild settings
+        settings = await self.bot.db.get_guild_settings(interaction.guild.id)
+
+        if not settings or not settings.get("relationship_channel"):
+            return await interaction.response.send_message(
+                "⚠️ The relationship system is not set up yet.\n"
+                "Ask an admin to run `/setup` first.",
+                ephemeral=True
+            )
+
+        relationship_channel_id = settings["relationship_channel"]
+
+        # Enforce channel
+        if interaction.channel.id != relationship_channel_id:
+            return await interaction.response.send_message(
+                f"❌ You must use this command in <#{relationship_channel_id}>.",
+                ephemeral=True
+            )
+
         await debug_log(
             self.bot,
             "🌳 `/tree` command started.",
@@ -302,69 +342,16 @@ class Relationships(commands.Cog):
 
         try:
 
-            # ------------------------------------------
-            # DEFER DISCORD INTERACTION
-            # ------------------------------------------
-
             await interaction.response.defer(thinking=True)
-
-            await debug_log(
-                self.bot,
-                "✅ Interaction deferred successfully.",
-                "SUCCESS"
-            )
-
-            # ------------------------------------------
-            # TARGET USER
-            # ------------------------------------------
 
             target = user or interaction.user
 
-            await debug_log(
-                self.bot,
-                f"🔍 Building tree for **{target.display_name}** (`{target.id}`).",
-                "DEBUG"
-            )
-
-            # ------------------------------------------
-            # DATABASE
-            # ------------------------------------------
-
-            await debug_log(
-                self.bot,
-                "🔄 Getting relationships from PostgreSQL...",
-                "DEBUG"
-            )
-
             rows = await get_relationships(target.id)
 
-            await debug_log(
-                self.bot,
-                f"✅ Database returned **{len(rows)}** relationships.",
-                "SUCCESS"
-            )
-
             if not rows:
-
-                await debug_log(
-                    self.bot,
-                    "⚠️ User has no relationships.",
-                    "WARNING"
-                )
-
                 return await interaction.edit_original_response(
                     content="❌ You have no relationships yet."
                 )
-
-            # ------------------------------------------
-            # BUILD RELATIONSHIP LISTS
-            # ------------------------------------------
-
-            await debug_log(
-                self.bot,
-                "🔄 Processing relationships...",
-                "DEBUG"
-            )
 
             spouse = None
             caregivers = []
@@ -375,63 +362,27 @@ class Relationships(commands.Cog):
             pets = []
 
             for row in rows:
-
                 partner_id = row.get("partner_id")
                 rtype = row.get("relationship_type")
 
-                if not partner_id or not rtype:
-                    continue
-
                 partner = interaction.guild.get_member(partner_id)
-
                 if not partner:
                     continue
 
                 if rtype == "spouse":
                     spouse = partner.display_name
-
                 elif rtype == "caregiver":
                     caregivers.append(partner.display_name)
-
                 elif rtype == "little":
                     littles.append(partner.display_name)
-
                 elif rtype == "middle":
                     middles.append(partner.display_name)
-
                 elif rtype == "sibling":
                     siblings.append(partner.display_name)
-
                 elif rtype == "handler":
                     handler = partner.display_name
-
                 elif rtype == "pet":
                     pets.append(partner.display_name)
-
-            await debug_log(
-                self.bot,
-                (
-                    f"✅ Relationships processed.\n"
-                    f"Spouse: {spouse}\n"
-                    f"Caregivers: {len(caregivers)}\n"
-                    f"Littles: {len(littles)}\n"
-                    f"Middles: {len(middles)}\n"
-                    f"Siblings: {len(siblings)}\n"
-                    f"Handler: {handler}\n"
-                    f"Pets: {len(pets)}"
-                ),
-                "SUCCESS"
-            )
-
-            # ------------------------------------------
-            # GENERATE IMAGE
-            # ------------------------------------------
-
-            await debug_log(
-                self.bot,
-                "🖼️ Starting tree image generation...",
-                "DEBUG"
-            )
 
             jpeg_bytes = generate_tree_image(
                 user_name=target.display_name,
@@ -444,22 +395,6 @@ class Relationships(commands.Cog):
                 pets=pets,
             )
 
-            await debug_log(
-                self.bot,
-                "✅ Tree image generated successfully.",
-                "SUCCESS"
-            )
-
-            # ------------------------------------------
-            # SEND IMAGE
-            # ------------------------------------------
-
-            await debug_log(
-                self.bot,
-                "📤 Uploading tree image to Discord...",
-                "DEBUG"
-            )
-
             file = discord.File(
                 jpeg_bytes,
                 filename="family_tree.jpg"
@@ -468,12 +403,6 @@ class Relationships(commands.Cog):
             await interaction.edit_original_response(
                 content=f"🌳 Cute pastel family tree for {target.mention}:",
                 attachments=[file]
-            )
-
-            await debug_log(
-                self.bot,
-                "✅ `/tree` completed successfully.",
-                "SUCCESS"
             )
 
         except Exception as e:
@@ -485,7 +414,6 @@ class Relationships(commands.Cog):
             )
 
             try:
-
                 await interaction.edit_original_response(
                     content=(
                         "❌ Something went wrong while generating "
@@ -493,7 +421,6 @@ class Relationships(commands.Cog):
                         "to the bot debug channel."
                     )
                 )
-
             except Exception:
                 pass
 
