@@ -6,7 +6,15 @@ from discord import app_commands
 from discord.ext import commands
 
 from database.autothreads import init_autothreads_table
-from database.tickets import add_ticket_panel  # optional use in seeding
+# 4) Seed demo ticket panel if requested
+if seed_demo:
+    try:
+        # lazy import to avoid circular import at module load time
+        from database.tickets import add_ticket_panel
+        await add_ticket_panel(guild_id=0, channel_id=0, message_id=0, config_json="{}")
+    except Exception:
+        # ignore if table missing or other issues; migrations should have created tables
+        pass
 
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
