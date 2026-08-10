@@ -13,8 +13,6 @@ from views.ticket_views import (
     CloseTicketView,
 )
 
-
-
 # --------------------------------------------------
 # BOT SETUP
 # --------------------------------------------------
@@ -40,7 +38,7 @@ async def on_ready():
         print(f"❌ Error syncing commands: {e}")
 
 # --------------------------------------------------
-# EXAMPLE PREFIX COMMAND
+# PREFIX COMMAND
 # --------------------------------------------------
 
 @bot.command()
@@ -63,21 +61,26 @@ async def load_cogs():
 # --------------------------------------------------
 # STARTUP
 # --------------------------------------------------
+
 async def main():
     async with bot:
 
+        # CONNECT TO DATABASE
         await db.connect()
 
+        # LOAD COGS
         await load_cogs()
 
+        # REGISTER PERSISTENT VIEWS
         bot.add_view(VerificationTicketView())
         bot.add_view(ReportsTicketView())
         bot.add_view(ApplicationsTicketView())
         bot.add_view(ContactTicketView())
         bot.add_view(CloseTicketView())
 
+        # START BOT
         await bot.start(TOKEN)
 
     await db.close()
-    
+
 asyncio.run(main())
