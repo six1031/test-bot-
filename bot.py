@@ -22,6 +22,9 @@ TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+bot.db = db
+
+
 # --------------------------------------------------
 # READY EVENT
 # --------------------------------------------------
