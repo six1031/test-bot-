@@ -45,7 +45,7 @@ class SetupCog(commands.Cog):
     ):
         try:
             await asyncio.wait_for(
-                self._do_setup_work(log_channel, admin_role, marriage_channel, enforce_only_post),
+                self._do_setup_work(interaction, log_channel, admin_role, marriage_channel, enforce_only_post),
                 timeout=180.0
             )
             await interaction.followup.send("✅ Setup completed successfully.", ephemeral=True)
@@ -57,6 +57,7 @@ class SetupCog(commands.Cog):
 
     async def _do_setup_work(
         self,
+        interaction: discord.Interaction,
         log_channel: discord.TextChannel | None,
         admin_role: discord.Role | None,
         marriage_channel: discord.TextChannel | None,
@@ -72,7 +73,7 @@ class SetupCog(commands.Cog):
 
         await log("🔧 Setup: starting.")
 
-        # 1) Ensure admin role exists or note it
+        # Determine guild context
         guild = None
         if marriage_channel:
             guild = marriage_channel.guild
@@ -81,7 +82,6 @@ class SetupCog(commands.Cog):
         elif admin_role:
             guild = admin_role.guild
         else:
-            # best-effort: use first guild bot is in
             guilds = list(self.bot.guilds)
             guild = guilds[0] if guilds else None
 
@@ -89,7 +89,7 @@ class SetupCog(commands.Cog):
             await log("⚠️ No guild context found; aborting role/channel operations.")
             return
 
-        # If admin_role not provided, try to find or create a sensible default
+        # Ensure admin role exists or create default
         if admin_role is None:
             admin_role = discord.utils.get(guild.roles, name="Admin")
             if admin_role is None:
@@ -98,34 +98,25 @@ class SetupCog(commands.Cog):
                     await log("✅ Created role: Admin")
                 except Exception:
                     await log("⚠️ Failed to create Admin role (missing permissions).")
-
         else:
             await log(f"✅ Admin role set to: {admin_role.name}")
 
-        # 2) Ensure marriage_channel exists or create a placeholder if not provided
+        # Marriage channel handling
         if marriage_channel is None:
-            # do not auto-create unless you want; just log
             await log("ℹ️ No marriage/relationships channel provided.")
         else:
             await log(f"✅ Marriage channel set to: #{marriage_channel.name}")
 
-            # 3) Optionally enforce posting restrictions in the marriage channel
             if enforce_only_post:
                 try:
-                    # Build overwrites: deny send_messages for @everyone, allow for admin_role and the bot
                     everyone = guild.default_role
                     bot_member = guild.get_member(self.bot.user.id)
-                    overwrites = marriage_channel.overwrites_for(everyone)
-                    overwrites.send_messages = False
 
-                    # Apply overwrites for everyone
                     await marriage_channel.set_permissions(everyone, send_messages=False, reason="Setup: restrict marriage channel")
 
-                    # Ensure admin_role can send
                     if admin_role:
                         await marriage_channel.set_permissions(admin_role, send_messages=True, reason="Setup: allow admin role to post")
 
-                    # Ensure bot can send
                     if bot_member:
                         await marriage_channel.set_permissions(bot_member, send_messages=True, reason="Setup: allow bot to post")
 
@@ -133,6 +124,25 @@ class SetupCog(commands.Cog):
                 except Exception:
                     traceback.print_exc()
                     await log(f"⚠️ Failed to enforce posting restrictions on #{marriage_channel.name}. Check bot permissions (Manage Channels).")
+
+        # Persist settings to DB (best-effort)
+        try:
+            db_obj = getattr(self.bot, "db", None)
+            if db_obj and callable(getattr(db_obj, "upsert_guild_settings", None)):
+                await db_obj.upsert_guild_settings(
+                    guild_id=guild.id,
+                    log_channel_id=log_channel.id if log_channel else None,
+                    admin_role_id=admin_role.id if admin_role else None,
+                    marriage_channel_id=marriage_channel.id if marriage_channel else None,
+                    relationship_channel_id=marriage_channel.id if marriage_channel else None,
+                    enforce_only_post=enforce_only_post
+                )
+                await log("✅ Saved guild settings to database.")
+            else:
+                await log("ℹ️ Database upsert helper not available; settings not persisted.")
+        except Exception:
+            traceback.print_exc()
+            await log("⚠️ Failed to save guild settings to database.")
 
         await log("🔧 Setup finished (best-effort).")
 
