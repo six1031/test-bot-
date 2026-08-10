@@ -5,22 +5,13 @@ import asyncio
 
 from database.database import db
 from database.autothreads import get_all_autothreads
-from database.tickets import get_all_open_tickets
-
-from views.ticket_views import (
-    VerificationTicketView,
-    ReportsTicketView,
-    ApplicationsTicketView,
-    ContactTicketView,
-    CloseTicketView,
-)
 
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-bot.db = db  # REQUIRED so cogs can access the database
+bot.db = db
 bot.autothread_config = {}  # SQL replaces JSON
 
 
@@ -74,33 +65,6 @@ async def restore_autothreads():
 
 
 # --------------------------------------------------
-# RESTORE TICKET VIEWS
-# --------------------------------------------------
-
-async def restore_tickets():
-    print("🔄 Restoring ticket views...")
-
-    open_tickets = await get_all_open_tickets()
-
-    for ticket in open_tickets:
-        channel_id = ticket["channel_id"]
-        channel = bot.get_channel(channel_id)
-
-        if not channel:
-            print(f"⚠️ Missing ticket channel {channel_id}")
-            continue
-
-        try:
-            async for msg in channel.history(limit=10):
-                if msg.author == bot.user:
-                    await msg.edit(view=CloseTicketView())
-                    print(f"🔧 Restored ticket view in #{channel.name}")
-                    break
-        except Exception as e:
-            print(f"❌ Failed restoring ticket {channel_id}: {e}")
-
-
-# --------------------------------------------------
 # STARTUP
 # --------------------------------------------------
 
@@ -110,18 +74,8 @@ async def main():
         await db.connect()
         await load_cogs()
 
-        # Register persistent views
-        bot.add_view(VerificationTicketView())
-        bot.add_view(ReportsTicketView())
-        bot.add_view(ApplicationsTicketView())
-        bot.add_view(ContactTicketView())
-        bot.add_view(CloseTicketView())
-
         # Restore SQL-based autothreads
         await restore_autothreads()
-
-        # Restore ticket views
-        await restore_tickets()
 
         await bot.start(TOKEN)
 
