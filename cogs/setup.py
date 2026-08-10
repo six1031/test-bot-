@@ -9,21 +9,8 @@ class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # Simple base command (keeps the current behavior)
     @app_commands.command(
         name="setup",
-        description="Run initial server setup (quick)"
-    )
-    async def setup_simple(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "🔧 Setup started — running in background. Use /setup-advanced for options.",
-            ephemeral=True
-        )
-        self.bot.loop.create_task(self._run_setup_background(interaction, run_migrations=True, create_roles=False, create_channels=False, seed_demo=False, timeout_seconds=120))
-
-    # Advanced command with options (restores the options UI)
-    @app_commands.command(
-        name="setup-advanced",
         description="Run initial server setup with options"
     )
     @app_commands.describe(
@@ -33,7 +20,7 @@ class SetupCog(commands.Cog):
         seed_demo="Seed demo data such as ticket panels",
         timeout_seconds="Max seconds to allow setup to run"
     )
-    async def setup_advanced(
+    async def setup_command(
         self,
         interaction: discord.Interaction,
         run_migrations: bool = True,
@@ -42,10 +29,13 @@ class SetupCog(commands.Cog):
         seed_demo: bool = False,
         timeout_seconds: int = 120
     ):
+        # Immediate reply so Discord doesn't stay thinking
         await interaction.response.send_message(
-            "🔧 Advanced setup started — running in background. I'll report back here.",
+            "🔧 Setup started — running in background. I'll report back here.",
             ephemeral=True
         )
+
+        # Launch background task (non-blocking)
         self.bot.loop.create_task(
             self._run_setup_background(interaction, run_migrations, create_roles, create_channels, seed_demo, timeout_seconds)
         )
@@ -76,7 +66,7 @@ class SetupCog(commands.Cog):
         if create_roles:
             guilds = list(self.bot.guilds)
             if guilds:
-                guild = guilds[0]
+                guild = guilds[0]  # best-effort: operate on first guild the bot is in
                 roles_to_create = ["Moderator", "Support", "Member"]
                 for rname in roles_to_create:
                     existing = discord.utils.get(guild.roles, name=rname)
