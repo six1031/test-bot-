@@ -5,23 +5,30 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from database.autothreads import init_autothreads_table
+from database.tickets import add_ticket_panel  # optional use in seeding
+
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(
         name="setup",
-        description="Run initial setup and migrations"
+        description="Run initial server setup and optional migrations"
     )
     @app_commands.describe(
-        run_migrations="Whether to run DB migrations now",
-        seed_demo="Whether to seed demo data (true/false)",
+        run_migrations="Run database migrations and ensure tables",
+        create_roles="Create default server roles",
+        create_channels="Create default channels and categories",
+        seed_demo="Seed demo data such as ticket panels",
         timeout_seconds="Max seconds to allow setup to run"
     )
     async def setup_command(
         self,
         interaction: discord.Interaction,
         run_migrations: bool = True,
+        create_roles: bool = False,
+        create_channels: bool = False,
         seed_demo: bool = False,
         timeout_seconds: int = 120
     ):
@@ -33,12 +40,15 @@ class SetupCog(commands.Cog):
 
         # Launch background task (non-blocking)
         self.bot.loop.create_task(
-            self._run_setup_background(interaction, run_migrations, seed_demo, timeout_seconds)
+            self._run_setup_background(interaction, run_migrations, create_roles, create_channels, seed_demo, timeout_seconds)
         )
 
-    async def _run_setup_background(self, interaction: discord.Interaction, run_migrations: bool, seed_demo: bool, timeout_seconds: int):
+    async def _run_setup_background(self, interaction: discord.Interaction, run_migrations: bool, create_roles: bool, create_channels: bool, seed_demo: bool, timeout_seconds: int):
         try:
-            await asyncio.wait_for(self._do_setup_work(run_migrations, seed_demo), timeout=timeout_seconds)
+            await asyncio.wait_for(
+                self._do_setup_work(run_migrations, create_roles, create_channels, seed_demo),
+                timeout=timeout_seconds
+            )
             await interaction.followup.send("✅ Setup completed successfully.", ephemeral=True)
         except asyncio.TimeoutError:
             await interaction.followup.send("⚠️ Setup timed out. Check DB connectivity and try again.", ephemeral=True)
@@ -46,17 +56,41 @@ class SetupCog(commands.Cog):
             traceback.print_exc()
             await interaction.followup.send(f"❌ Setup failed: {e}", ephemeral=True)
 
-    async def _do_setup_work(self, run_migrations: bool, seed_demo: bool):
-        # Example: ensure autothreads table
-        from database.autothreads import init_autothreads_table
+    async def _do_setup_work(self, run_migrations: bool, create_roles: bool, create_channels: bool, seed_demo: bool):
+        # 1) Ensure DB tables
         if run_migrations:
             await init_autothreads_table()
 
-        # Example: optionally seed demo data
+        # 2) Create roles if requested
+        if create_roles:
+            guilds = list(self.bot.guilds)
+            if guilds:
+                guild = guilds[0]  # best-effort: operate on first guild the bot is in
+                roles_to_create = ["Moderator", "Support", "Member"]
+                for rname in roles_to_create:
+                    existing = discord.utils.get(guild.roles, name=rname)
+                    if not existing:
+                        await guild.create_role(name=rname)
+        # 3) Create channels if requested
+        if create_channels:
+            guilds = list(self.bot.guilds)
+            if guilds:
+                guild = guilds[0]
+                category = discord.utils.get(guild.categories, name="Community")
+                if not category:
+                    category = await guild.create_category("Community")
+                # create a text channel if missing
+                if not discord.utils.get(guild.text_channels, name="welcome"):
+                    await guild.create_text_channel("welcome", category=category)
+
+        # 4) Seed demo ticket panel if requested
         if seed_demo:
-            from database.tickets import add_ticket_panel
-            # add a demo panel (replace with real values)
-            await add_ticket_panel(0, 0, 0, "{}")
+            # Replace with real values or skip if not applicable
+            try:
+                await add_ticket_panel(guild_id=0, channel_id=0, message_id=0, config_json="{}")
+            except Exception:
+                # ignore if table missing or other issues; migrations should have created tables
+                pass
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(SetupCog(bot))
