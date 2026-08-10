@@ -1,10 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json
-import os
 
-CONFIG_PATH = "data/autothread_config.json"
+from database.autothreads import add_autothread
 
 DEFAULT_CONFIG = {
     "enabled": False,
@@ -15,20 +13,6 @@ DEFAULT_CONFIG = {
     "status_reactions": True,
     "slowmode": 0
 }
-
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    with open(CONFIG_PATH, "r") as f:
-        try:
-            return json.load(f)
-        except:
-            return {}
-
-def save_config(data):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=4)
-
 
 # --------------------------------------------------
 # MODAL POP-UP FOR TITLE INPUT
@@ -55,7 +39,6 @@ class TitleFormatModal(discord.ui.Modal, title="Set Auto-Thread Title"):
     async def on_submit(self, interaction: discord.Interaction):
         cfg = self.config.get(str(self.channel_id), DEFAULT_CONFIG.copy())
 
-        # Validate max length
         try:
             max_len = int(self.max_title_length.value)
             if max_len < 1 or max_len > 100:
@@ -66,12 +49,11 @@ class TitleFormatModal(discord.ui.Modal, title="Set Auto-Thread Title"):
                 ephemeral=True
             )
 
-        # Save new values
         cfg["title_format"] = self.title_format.value
         cfg["max_title_length"] = max_len
 
         self.config[str(self.channel_id)] = cfg
-        save_config(self.config)
+        interaction.client.autothread_config = self.config
 
         await interaction.response.send_message(
             f"✅ Title settings updated for <#{self.channel_id}>.",
@@ -86,10 +68,10 @@ class TitleFormatModal(discord.ui.Modal, title="Set Auto-Thread Title"):
 class Autothread(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.config = load_config()
+        self.bot.autothread_config = {}  # SQL replaces JSON
 
     def get_channel_config(self, channel_id: int):
-        return self.config.get(str(channel_id), DEFAULT_CONFIG.copy())
+        return self.bot.autothread_config.get(str(channel_id), DEFAULT_CONFIG.copy())
 
     # --------------------------------------------------
     # /autothread — main config command
@@ -97,7 +79,7 @@ class Autothread(commands.Cog):
 
     @app_commands.command(name="autothread", description="Configure auto-threading for a channel.")
     @app_commands.describe(
-        channel_id="Channel ID to configure",
+        channel="Channel to configure",
         enabled="Turn auto-threading ON or OFF",
         reply_message="Message to send inside the thread",
         include_bots="Create threads for bot messages?",
@@ -106,7 +88,7 @@ class Autothread(commands.Cog):
     async def autothread(
         self,
         interaction: discord.Interaction,
-        channel_id: str,
+        channel: discord.TextChannel,
         enabled: bool = None,
         reply_message: str = None,
         include_bots: bool = None,
@@ -119,15 +101,7 @@ class Autothread(commands.Cog):
                 ephemeral=True
             )
 
-        try:
-            chan_id_int = int(channel_id)
-        except:
-            return await interaction.response.send_message(
-                "Channel ID must be a valid number.",
-                ephemeral=True
-            )
-
-        cfg = self.get_channel_config(chan_id_int)
+        cfg = self.get_channel_config(channel.id)
 
         if enabled is not None:
             cfg["enabled"] = enabled
@@ -138,11 +112,10 @@ class Autothread(commands.Cog):
         if slowmode is not None:
             cfg["slowmode"] = max(0, slowmode)
 
-        self.config[str(chan_id_int)] = cfg
-        save_config(self.config)
+        self.bot.autothread_config[str(channel.id)] = cfg
 
         await interaction.response.send_message(
-            f"✅ Auto-thread settings updated for <#{chan_id_int}>.",
+            f"✅ Auto-thread settings updated for {channel.mention}.",
             ephemeral=True
         )
 
@@ -151,8 +124,8 @@ class Autothread(commands.Cog):
     # --------------------------------------------------
 
     @app_commands.command(name="autothread-title", description="Open a pop-up menu to set the auto-thread title.")
-    @app_commands.describe(channel_id="Channel ID to configure")
-    async def autothread_title(self, interaction: discord.Interaction, channel_id: str):
+    @app_commands.describe(channel="Channel to configure")
+    async def autothread_title(self, interaction: discord.Interaction, channel: discord.TextChannel):
         ADMIN_ROLE_ID = 1428444870766231622
         if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
             return await interaction.response.send_message(
@@ -160,15 +133,7 @@ class Autothread(commands.Cog):
                 ephemeral=True
             )
 
-        try:
-            chan_id_int = int(channel_id)
-        except:
-            return await interaction.response.send_message(
-                "Channel ID must be a valid number.",
-                ephemeral=True
-            )
-
-        modal = TitleFormatModal(chan_id_int, self.config)
+        modal = TitleFormatModal(channel.id, self.bot.autothread_config)
         await interaction.response.send_modal(modal)
 
     # --------------------------------------------------
@@ -200,6 +165,15 @@ class Autothread(commands.Cog):
         thread = await message.create_thread(
             name=title,
             auto_archive_duration=1440
+        )
+
+        # Store in SQL
+        await add_autothread(
+            thread_id=thread.id,
+            parent_channel_id=message.channel.id,
+            parent_message_id=message.id,
+            thread_type=message.channel.id,  # store under the channel it belongs to
+            owner_id=message.author.id
         )
 
         if cfg["slowmode"] > 0:
