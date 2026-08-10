@@ -1,3 +1,5 @@
+# cogs/relationships.py
+import traceback
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -27,13 +29,23 @@ class MarriageProposalView(discord.ui.View):
         self.partner_id = partner_id
         self.message: discord.Message | None = None
 
-    async def _disable(self, interaction: discord.Interaction, new_content: str | None = None):
+    async def _disable(self, interaction: discord.Interaction | None = None, new_content: str | None = None):
         for child in self.children:
             child.disabled = True
-        if new_content is not None:
-            await interaction.message.edit(content=new_content, view=self)
-        else:
-            await interaction.message.edit(view=self)
+
+        # Prefer editing the stored message if available
+        target_message = self.message
+        if interaction and getattr(interaction, "message", None):
+            target_message = interaction.message
+
+        if target_message:
+            try:
+                if new_content is not None:
+                    await target_message.edit(content=new_content, view=self)
+                else:
+                    await target_message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
     @discord.ui.button(
         label="✅ Accept",
@@ -48,28 +60,50 @@ class MarriageProposalView(discord.ui.View):
                 ephemeral=True,
             )
 
-        if await is_married(self.proposer_id) or await is_married(self.partner_id):
+        try:
+            if await is_married(self.proposer_id) or await is_married(self.partner_id):
+                await interaction.response.send_message(
+                    "❌ One of you is already married.",
+                    ephemeral=True,
+                )
+                await self._disable(interaction)
+                return
+        except Exception:
+            traceback.print_exc()
             await interaction.response.send_message(
-                "❌ One of you is already married.",
+                "❌ Could not verify marriage status. Try again later.",
                 ephemeral=True,
             )
-            return await self._disable(interaction)
+            await self._disable(interaction)
+            return
 
-        await create_marriage(self.proposer_id, self.partner_id)
-        await add_relationship(self.proposer_id, self.partner_id, "spouse")
-        await add_relationship(self.partner_id, self.proposer_id, "spouse")
+        try:
+            await create_marriage(self.proposer_id, self.partner_id)
+            await add_relationship(self.proposer_id, self.partner_id, "spouse")
+            await add_relationship(self.partner_id, self.proposer_id, "spouse")
+        except Exception:
+            traceback.print_exc()
+            await interaction.response.send_message(
+                "❌ Failed to create marriage in the database. Check bot logs.",
+                ephemeral=True,
+            )
+            await self._disable(interaction)
+            return
 
         proposer = interaction.guild.get_member(self.proposer_id)
         partner = interaction.guild.get_member(self.partner_id)
 
+        proposer_mention = proposer.mention if proposer else f"<@{self.proposer_id}>"
+        partner_mention = partner.mention if partner else f"<@{self.partner_id}>"
+
         await interaction.response.send_message(
-            f"💍 You accepted! You are now married to {proposer.mention}.",
+            f"💍 You accepted! You are now married to {proposer_mention}.",
             ephemeral=True,
         )
 
         await self._disable(
             interaction,
-            new_content=f"💍 {proposer.mention} is now married to {partner.mention}!",
+            new_content=f"💍 {proposer_mention} is now married to {partner_mention}!",
         )
 
     @discord.ui.button(
@@ -88,6 +122,9 @@ class MarriageProposalView(discord.ui.View):
         proposer = interaction.guild.get_member(self.proposer_id)
         partner = interaction.guild.get_member(self.partner_id)
 
+        proposer_mention = proposer.mention if proposer else f"<@{self.proposer_id}>"
+        partner_mention = partner.mention if partner else f"<@{self.partner_id}>"
+
         await interaction.response.send_message(
             "💔 You declined the proposal.",
             ephemeral=True,
@@ -95,7 +132,7 @@ class MarriageProposalView(discord.ui.View):
 
         await self._disable(
             interaction,
-            new_content=f"💔 {partner.mention} declined {proposer.mention}'s marriage proposal.",
+            new_content=f"💔 {partner_mention} declined {proposer_mention}'s marriage proposal.",
         )
 
     async def on_timeout(self):
@@ -151,7 +188,14 @@ class Relationships(commands.Cog):
                 ephemeral=True
             )
 
-        await add_relationship(interaction.user.id, partner.id, rtype)
+        try:
+            await add_relationship(interaction.user.id, partner.id, rtype)
+        except Exception:
+            traceback.print_exc()
+            return await interaction.response.send_message(
+                "❌ Failed to add relationship. Check bot logs.",
+                ephemeral=True
+            )
 
         await interaction.response.send_message(
             f"✅ Added **{rtype}**: {partner.display_name}",
@@ -172,7 +216,14 @@ class Relationships(commands.Cog):
         partner: discord.Member
     ):
 
-        result = await remove_relationship(interaction.user.id, partner.id)
+        try:
+            result = await remove_relationship(interaction.user.id, partner.id)
+        except Exception:
+            traceback.print_exc()
+            return await interaction.response.send_message(
+                "❌ Failed to remove relationship. Check bot logs.",
+                ephemeral=True
+            )
 
         if result == "DELETE 0":
             return await interaction.response.send_message(
@@ -186,7 +237,7 @@ class Relationships(commands.Cog):
         )
 
     # --------------------------------------------------
-    # MARRY COMMAND (UPDATED)
+    # MARRY COMMAND
     # --------------------------------------------------
 
     @app_commands.command(
@@ -201,9 +252,25 @@ class Relationships(commands.Cog):
         interaction: discord.Interaction,
         partner: discord.Member
     ):
-
-        # Load guild settings
-        settings = await self.bot.db.get_guild_settings(interaction.guild.id)
+        # Defensive load of guild settings
+        settings = None
+        try:
+            db_obj = getattr(self.bot, "db", None)
+            get_settings = getattr(db_obj, "get_guild_settings", None)
+            if callable(get_settings):
+                settings = await get_settings(interaction.guild.id)
+            else:
+                settings = None
+        except Exception:
+            traceback.print_exc()
+            try:
+                await interaction.response.send_message(
+                    "⚠️ Could not load server settings. Ask an admin to run `/setup` or check bot logs.",
+                    ephemeral=True
+                )
+            except Exception:
+                pass
+            return
 
         if not settings or not settings.get("marriage_channel"):
             return await interaction.response.send_message(
@@ -234,15 +301,22 @@ class Relationships(commands.Cog):
                 ephemeral=True
             )
 
-        if await is_married(interaction.user.id):
-            return await interaction.response.send_message(
-                "❌ You are already married.",
-                ephemeral=True
-            )
+        try:
+            if await is_married(interaction.user.id):
+                return await interaction.response.send_message(
+                    "❌ You are already married.",
+                    ephemeral=True
+                )
 
-        if await is_married(partner.id):
+            if await is_married(partner.id):
+                return await interaction.response.send_message(
+                    "❌ That user is already married.",
+                    ephemeral=True
+                )
+        except Exception:
+            traceback.print_exc()
             return await interaction.response.send_message(
-                "❌ That user is already married.",
+                "❌ Could not verify marriage status. Try again later.",
                 ephemeral=True
             )
 
@@ -252,13 +326,24 @@ class Relationships(commands.Cog):
             partner_id=partner.id,
         )
 
-        await interaction.response.send_message(
-            f"💍 {interaction.user.mention} wants to marry {partner.mention}!\n"
-            f"{partner.mention}, do you accept?",
-            view=view,
-        )
-
-        view.message = await interaction.original_response()
+        try:
+            await interaction.response.send_message(
+                f"💍 {interaction.user.mention} wants to marry {partner.mention}!\n"
+                f"{partner.mention}, do you accept?",
+                view=view,
+            )
+            # store the message for the view to edit later
+            view.message = await interaction.original_response()
+        except Exception:
+            traceback.print_exc()
+            # If we failed to send the initial response, try to notify the user
+            try:
+                await interaction.response.send_message(
+                    "❌ Failed to send proposal message. Check bot permissions.",
+                    ephemeral=True
+                )
+            except Exception:
+                pass
 
     # --------------------------------------------------
     # DIVORCE COMMAND
@@ -273,7 +358,14 @@ class Relationships(commands.Cog):
         interaction: discord.Interaction
     ):
 
-        marriage = await get_marriage(interaction.user.id)
+        try:
+            marriage = await get_marriage(interaction.user.id)
+        except Exception:
+            traceback.print_exc()
+            return await interaction.response.send_message(
+                "❌ Could not check marriage status. Try again later.",
+                ephemeral=True
+            )
 
         if not marriage:
             return await interaction.response.send_message(
@@ -284,9 +376,16 @@ class Relationships(commands.Cog):
         user1 = marriage["user1_id"]
         user2 = marriage["user2_id"]
 
-        await delete_marriage(marriage["id"])
-        await remove_relationship(user1, user2)
-        await remove_relationship(user2, user1)
+        try:
+            await delete_marriage(marriage["id"])
+            await remove_relationship(user1, user2)
+            await remove_relationship(user2, user1)
+        except Exception:
+            traceback.print_exc()
+            return await interaction.response.send_message(
+                "❌ Failed to process divorce. Check bot logs.",
+                ephemeral=True
+            )
 
         partner_id = user2 if user1 == interaction.user.id else user1
         partner = interaction.guild.get_member(partner_id)
@@ -302,7 +401,7 @@ class Relationships(commands.Cog):
         )
 
     # --------------------------------------------------
-    # TREE COMMAND (UPDATED)
+    # TREE COMMAND
     # --------------------------------------------------
 
     @app_commands.command(
@@ -314,9 +413,21 @@ class Relationships(commands.Cog):
         interaction: discord.Interaction,
         user: discord.Member = None
     ):
-
-        # Load guild settings
-        settings = await self.bot.db.get_guild_settings(interaction.guild.id)
+        # Defensive load of guild settings
+        settings = None
+        try:
+            db_obj = getattr(self.bot, "db", None)
+            get_settings = getattr(db_obj, "get_guild_settings", None)
+            if callable(get_settings):
+                settings = await get_settings(interaction.guild.id)
+            else:
+                settings = None
+        except Exception:
+            traceback.print_exc()
+            return await interaction.response.send_message(
+                "⚠️ Could not load server settings. Ask an admin to run `/setup` or check bot logs.",
+                ephemeral=True
+            )
 
         if not settings or not settings.get("relationship_channel"):
             return await interaction.response.send_message(
@@ -341,7 +452,6 @@ class Relationships(commands.Cog):
         )
 
         try:
-
             await interaction.response.defer(thinking=True)
 
             target = user or interaction.user
@@ -406,13 +516,12 @@ class Relationships(commands.Cog):
             )
 
         except Exception as e:
-
             await debug_exception(
                 self.bot,
                 "🌳 `/tree` CRASHED",
                 e
             )
-
+            traceback.print_exc()
             try:
                 await interaction.edit_original_response(
                     content=(
