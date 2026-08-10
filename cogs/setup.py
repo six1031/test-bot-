@@ -5,17 +5,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database.autothreads import init_autothreads_table
-# 4) Seed demo ticket panel if requested
-if seed_demo:
-    try:
-        # lazy import to avoid circular import at module load time
-        from database.tickets import add_ticket_panel
-        await add_ticket_panel(guild_id=0, channel_id=0, message_id=0, config_json="{}")
-    except Exception:
-        # ignore if table missing or other issues; migrations should have created tables
-        pass
-
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -65,9 +54,14 @@ class SetupCog(commands.Cog):
             await interaction.followup.send(f"❌ Setup failed: {e}", ephemeral=True)
 
     async def _do_setup_work(self, run_migrations: bool, create_roles: bool, create_channels: bool, seed_demo: bool):
-        # 1) Ensure DB tables
+        # 1) Ensure DB tables (lazy import to avoid circular imports)
         if run_migrations:
-            await init_autothreads_table()
+            try:
+                from database.autothreads import init_autothreads_table
+                await init_autothreads_table()
+            except Exception:
+                # log but continue; init_autothreads_table should be defensive
+                traceback.print_exc()
 
         # 2) Create roles if requested
         if create_roles:
@@ -79,6 +73,7 @@ class SetupCog(commands.Cog):
                     existing = discord.utils.get(guild.roles, name=rname)
                     if not existing:
                         await guild.create_role(name=rname)
+
         # 3) Create channels if requested
         if create_channels:
             guilds = list(self.bot.guilds)
@@ -87,18 +82,18 @@ class SetupCog(commands.Cog):
                 category = discord.utils.get(guild.categories, name="Community")
                 if not category:
                     category = await guild.create_category("Community")
-                # create a text channel if missing
                 if not discord.utils.get(guild.text_channels, name="welcome"):
                     await guild.create_text_channel("welcome", category=category)
 
-        # 4) Seed demo ticket panel if requested
+        # 4) Seed demo ticket panel if requested (lazy import)
         if seed_demo:
-            # Replace with real values or skip if not applicable
             try:
+                from database.tickets import add_ticket_panel
+                # Use real values or skip; here we attempt and ignore failures
                 await add_ticket_panel(guild_id=0, channel_id=0, message_id=0, config_json="{}")
             except Exception:
-                # ignore if table missing or other issues; migrations should have created tables
-                pass
+                traceback.print_exc()
+                # ignore to avoid failing the whole setup
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(SetupCog(bot))
