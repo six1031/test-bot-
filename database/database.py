@@ -269,20 +269,22 @@ class Database:
             owner_id,
             ticket_type
             )
-             # ==================================================
-    # GUILD SETTINGS FUNCTIONS
-    # ==================================================
 
-    async def set_guild_settings(
-        self,
-        guild_id,
-        admin_role=None,
-        marriage_channel=None,
-        relationship_channel=None,
-        ticket_category=None,
-        log_channel=None
-    ):
-        async with self.pool.acquire() as conn:
+    
+        # ==================================================
+        # GUILD SETTINGS FUNCTIONS
+        # ==================================================
+
+        async def set_guild_settings(
+            self,
+            guild_id,
+            admin_role=None,
+            marriage_channel=None,
+            relationship_channel=None,
+            ticket_category=None,
+            log_channel=None
+        ):
+         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO guild_settings
@@ -304,8 +306,8 @@ class Database:
                 log_channel
             )
 
-    async def get_guild_settings(self, guild_id):
-        async with self.pool.acquire() as conn:
+        async def get_guild_settings(self, guild_id):
+            async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 """
                 SELECT *
