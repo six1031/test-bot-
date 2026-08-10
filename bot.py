@@ -72,6 +72,9 @@ async def main():
     async with bot:
 
         await db.connect()
+        
+        await init_autothreads_table()
+        
         await load_cogs()
 
         # Restore SQL-based autothreads
