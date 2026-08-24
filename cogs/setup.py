@@ -17,6 +17,7 @@ class SetupCog(commands.Cog):
         log_channel="Channel to send setup logs to",
         admin_role="Role to treat as server admin for setup",
         staff_role="Role for staff/moderation and tickets",
+        ticket_category="Category where ticket channels will be created",
         marriage_channel="Channel for marriage/relationships posts",
         enforce_only_post="If true, restrict posting to the selected marriage channel"
     )
@@ -26,6 +27,7 @@ class SetupCog(commands.Cog):
         log_channel: discord.TextChannel | None = None,
         admin_role: discord.Role | None = None,
         staff_role: discord.Role | None = None,
+        ticket_category: discord.CategoryChannel | None = None,
         marriage_channel: discord.TextChannel | None = None,
         enforce_only_post: bool = True
     ):
@@ -39,6 +41,7 @@ class SetupCog(commands.Cog):
                 log_channel,
                 admin_role,
                 staff_role,
+                ticket_category,
                 marriage_channel,
                 enforce_only_post
             )
@@ -50,6 +53,7 @@ class SetupCog(commands.Cog):
         log_channel: discord.TextChannel | None,
         admin_role: discord.Role | None,
         staff_role: discord.Role | None,
+        ticket_category: discord.CategoryChannel | None,
         marriage_channel: discord.TextChannel | None,
         enforce_only_post: bool
     ):
@@ -60,6 +64,7 @@ class SetupCog(commands.Cog):
                     log_channel,
                     admin_role,
                     staff_role,
+                    ticket_category,
                     marriage_channel,
                     enforce_only_post
                 ),
@@ -78,6 +83,7 @@ class SetupCog(commands.Cog):
         log_channel: discord.TextChannel | None,
         admin_role: discord.Role | None,
         staff_role: discord.Role | None,
+        ticket_category: discord.CategoryChannel | None,
         marriage_channel: discord.TextChannel | None,
         enforce_only_post: bool
     ):
@@ -152,6 +158,7 @@ class SetupCog(commands.Cog):
                     log_channel_id=log_channel.id if log_channel else None,
                     admin_role_id=admin_role.id if admin_role else None,
                     staff_role_id=staff_role.id if staff_role else None,
+                    ticket_category_id=ticket_category.id if ticket_category else None,
                     marriage_channel_id=marriage_channel.id if marriage_channel else None,
                     relationship_channel_id=marriage_channel.id if marriage_channel else None,
                     enforce_only_post=enforce_only_post
