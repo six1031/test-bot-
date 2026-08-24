@@ -66,7 +66,16 @@ class Database:
             return await conn.fetchrow(query, *args)
 
     async def run_migrations(self):
-        return
+    await self.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ticket_panels (
+            message_id BIGINT PRIMARY KEY,
+            guild_id BIGINT NOT NULL,
+            channel_id BIGINT NOT NULL,
+            panel_type TEXT NOT NULL
+        )
+        """
+    )
 
     # --------------------------------------------------
     # GUILD SETTINGS
