@@ -123,6 +123,7 @@ class Database:
         guild_id: int,
         log_channel_id: int | None = None,
         admin_role_id: int | None = None,
+        staff_role_id: int | None = None,
         marriage_channel_id: int | None = None,
         relationship_channel_id: int | None = None,
         enforce_only_post: bool = False,
@@ -141,6 +142,7 @@ class Database:
                     guild_id,
                     log_channel,
                     admin_role,
+                    staff_role,
                     marriage_channel,
                     relationship_channel
                 )
@@ -158,6 +160,10 @@ class Database:
                         EXCLUDED.admin_role,
                         guild_settings.admin_role
                     ),
+                    staff_role = COALESCE(
+                        EXCLUDED.staff_role,
+                        guild_settings.staff_role
+                    ),
 
                     marriage_channel = COALESCE(
                         EXCLUDED.marriage_channel,
@@ -172,6 +178,7 @@ class Database:
                 guild_id,
                 log_channel_id,
                 admin_role_id,
+                staff_role,
                 marriage_channel_id,
                 relationship_channel_id,
             )
