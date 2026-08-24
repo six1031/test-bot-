@@ -89,6 +89,7 @@ class Database:
                 SELECT
                     guild_id,
                     log_channel,
+                    staff_role,
                     admin_role,
                     marriage_channel,
                     relationship_channel,
