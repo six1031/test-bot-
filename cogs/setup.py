@@ -16,6 +16,7 @@ class SetupCog(commands.Cog):
     @app_commands.describe(
         log_channel="Channel to send setup logs to",
         admin_role="Role to treat as server admin for setup",
+        staff_role="Role for staff/moderation and tickets",
         marriage_channel="Channel for marriage/relationships posts",
         enforce_only_post="If true, restrict posting to the selected marriage channel"
     )
@@ -24,6 +25,7 @@ class SetupCog(commands.Cog):
         interaction: discord.Interaction,
         log_channel: discord.TextChannel | None = None,
         admin_role: discord.Role | None = None,
+        staff_role: discord.Role | None = None,
         marriage_channel: discord.TextChannel | None = None,
         enforce_only_post: bool = True
     ):
@@ -32,7 +34,14 @@ class SetupCog(commands.Cog):
             ephemeral=True
         )
         self.bot.loop.create_task(
-            self._run_setup_background(interaction, log_channel, admin_role, marriage_channel, enforce_only_post)
+            self._run_setup_background(
+                interaction,
+                log_channel,
+                admin_role,
+                staff_role,
+                marriage_channel,
+                enforce_only_post
+            )
         )
 
     async def _run_setup_background(
@@ -40,12 +49,20 @@ class SetupCog(commands.Cog):
         interaction: discord.Interaction,
         log_channel: discord.TextChannel | None,
         admin_role: discord.Role | None,
+        staff_role: discord.Role | None,
         marriage_channel: discord.TextChannel | None,
         enforce_only_post: bool
     ):
         try:
             await asyncio.wait_for(
-                self._do_setup_work(interaction, log_channel, admin_role, marriage_channel, enforce_only_post),
+                self._do_setup_work(
+                    interaction,
+                    log_channel,
+                    admin_role,
+                    staff_role,
+                    marriage_channel,
+                    enforce_only_post
+                ),
                 timeout=180.0
             )
             await interaction.followup.send("✅ Setup completed successfully.", ephemeral=True)
@@ -60,6 +77,7 @@ class SetupCog(commands.Cog):
         interaction: discord.Interaction,
         log_channel: discord.TextChannel | None,
         admin_role: discord.Role | None,
+        staff_role: discord.Role | None,
         marriage_channel: discord.TextChannel | None,
         enforce_only_post: bool
     ):
@@ -133,6 +151,7 @@ class SetupCog(commands.Cog):
                     guild_id=guild.id,
                     log_channel_id=log_channel.id if log_channel else None,
                     admin_role_id=admin_role.id if admin_role else None,
+                    staff_role_id=staff_role.id if staff_role else None,
                     marriage_channel_id=marriage_channel.id if marriage_channel else None,
                     relationship_channel_id=marriage_channel.id if marriage_channel else None,
                     enforce_only_post=enforce_only_post
