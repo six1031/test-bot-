@@ -224,49 +224,59 @@ def generate_tree_image(
 
         y = int(y_positions[group])
 
-        # Keep names close together.
-        max_spacing = 260
-        min_spacing = 140
+        # Build fonts and calculate the real width
+        # of every name box first.
+        fonts = []
+        node_widths = []
 
-        if len(labels) == 1:
-
-            positions = [
-                width // 2
-            ]
-
-        else:
-
-            available_width = min(
-                width - 300,
-                max_spacing * (len(labels) - 1)
-            )
-
-            spacing = max(
-                min_spacing,
-                available_width // (len(labels) - 1)
-            )
-
-            total_width = (
-                spacing * (len(labels) - 1)
-            )
-
-            start_x = (
-                width - total_width
-            ) // 2
-
-            positions = [
-                start_x + (i * spacing)
-                for i in range(len(labels))
-            ]
-
-        for x, label in zip(
-            positions,
-            labels
-        ):
+        for label in labels:
 
             font = auto_font(
                 label,
                 BASE_FONT_SIZE
+            )
+
+            fonts.append(font)
+
+            text_width, text_height = measure_text(
+                draw,
+                label,
+                font
+            )
+
+            node_width = (
+                text_width + NODE_PADDING_X
+            )
+
+            node_widths.append(
+                node_width
+            )
+
+        # Space between the edges of each box
+        box_gap = 35
+
+        # Calculate total width of this row
+        total_row_width = (
+            sum(node_widths)
+            + box_gap * (len(labels) - 1)
+        )
+
+        # Start the whole row in the centre
+        current_x = (
+            width - total_row_width
+        ) // 2
+
+        # Draw every node
+        for label, font, node_width in zip(
+            labels,
+            fonts,
+            node_widths
+        ):
+
+            # X position is the centre of this box
+            x = (
+                current_x
+                + node_width // 2
             )
 
             draw_node(
@@ -277,6 +287,11 @@ def generate_tree_image(
                 font
             )
 
+            # Move to the next box
+            current_x += (
+                node_width
+                + box_gap
+            )
     # --------------------------------------------------
     # SAVE IMAGE
     # --------------------------------------------------
