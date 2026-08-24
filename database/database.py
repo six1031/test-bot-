@@ -70,6 +70,8 @@ class Database:
     # --------------------------------------------------
 
     async def run_migrations(self):
+
+        # Ticket panel storage
         await self.execute(
             """
             CREATE TABLE IF NOT EXISTS ticket_panels (
@@ -81,6 +83,27 @@ class Database:
             """
         )
 
+        # Remove any old duplicate panel records
+        await self.execute(
+            """
+            DELETE FROM ticket_panels a
+            USING ticket_panels b
+            WHERE a.ctid < b.ctid
+              AND a.message_id = b.message_id
+            """
+        )
+
+        # Older versions of the table may not have had
+        # message_id marked as unique.
+        await self.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            ticket_panels_message_id_unique
+            ON ticket_panels (message_id)
+            """
+        )
+
+        # Ticket storage
         await self.execute(
             """
             CREATE TABLE IF NOT EXISTS tickets (
