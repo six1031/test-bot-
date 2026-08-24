@@ -89,8 +89,8 @@ class Database:
                 SELECT
                     guild_id,
                     log_channel,
-                    staff_role,
                     admin_role,
+                    staff_role,
                     marriage_channel,
                     relationship_channel,
                     ticket_category
@@ -107,6 +107,7 @@ class Database:
                 "guild_id": row["guild_id"],
                 "log_channel": row["log_channel"],
                 "admin_role": row["admin_role"],
+                "staff_role": row["staff_role"],
                 "marriage_channel": row["marriage_channel"],
                 "relationship_channel": row["relationship_channel"],
                 "ticket_category": row["ticket_category"],
