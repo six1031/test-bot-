@@ -26,12 +26,25 @@ class TicketTypeView(discord.ui.View):
         await self.create_ticket(interaction, "other")
 
     async def create_ticket(self, interaction, ticket_type):
-        guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="Tickets")
+              guild = interaction.guild
+
+        settings = await interaction.client.db.get_guild_settings(guild.id)
+
+        if not settings or not settings.get("ticket_category"):
+            return await interaction.followup.send(
+                "❌ Ticket category is not set up yet. Run `/setup` first.",
+                ephemeral=True
+        )
+
+        category = guild.get_channel(
+            settings["ticket_category"]
+        )
 
         if category is None:
-            category = await guild.create_category("Tickets")
-
+            return await interaction.followup.send(
+                "❌ The configured ticket category could not be found.",
+                ephemeral=True
+        )
         channel = await guild.create_text_channel(
             f"{ticket_type}-{interaction.user.name}",
             category=category
