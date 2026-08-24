@@ -65,17 +65,143 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, *args)
 
+    # --------------------------------------------------
+    # DATABASE MIGRATIONS
+    # --------------------------------------------------
+
     async def run_migrations(self):
-    await self.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ticket_panels (
-            message_id BIGINT PRIMARY KEY,
-            guild_id BIGINT NOT NULL,
-            channel_id BIGINT NOT NULL,
-            panel_type TEXT NOT NULL
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ticket_panels (
+                message_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                panel_type TEXT NOT NULL
+            )
+            """
         )
-        """
-    )
+
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                channel_id BIGINT PRIMARY KEY,
+                owner_id BIGINT NOT NULL,
+                ticket_type TEXT NOT NULL,
+                closed BOOLEAN NOT NULL DEFAULT FALSE
+            )
+            """
+        )
+
+    # --------------------------------------------------
+    # TICKET PANELS
+    # --------------------------------------------------
+
+    async def add_ticket_panel(
+        self,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        panel_type: str,
+    ):
+        await self.execute(
+            """
+            INSERT INTO ticket_panels (
+                guild_id,
+                channel_id,
+                message_id,
+                panel_type
+            )
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (message_id) DO NOTHING
+            """,
+            guild_id,
+            channel_id,
+            message_id,
+            panel_type,
+        )
+
+    async def get_ticket_panels(self):
+        return await self.fetch(
+            """
+            SELECT
+                guild_id,
+                channel_id,
+                message_id,
+                panel_type
+            FROM ticket_panels
+            """
+        )
+
+    async def remove_ticket_panel(self, message_id: int):
+        await self.execute(
+            """
+            DELETE FROM ticket_panels
+            WHERE message_id = $1
+            """,
+            message_id,
+        )
+
+    # --------------------------------------------------
+    # TICKETS
+    # --------------------------------------------------
+
+    async def create_ticket(
+        self,
+        channel_id: int,
+        owner_id: int,
+        ticket_type: str,
+    ):
+        await self.execute(
+            """
+            INSERT INTO tickets (
+                channel_id,
+                owner_id,
+                ticket_type,
+                closed
+            )
+            VALUES ($1, $2, $3, FALSE)
+            ON CONFLICT (channel_id)
+            DO UPDATE SET
+                owner_id = EXCLUDED.owner_id,
+                ticket_type = EXCLUDED.ticket_type,
+                closed = FALSE
+            """,
+            channel_id,
+            owner_id,
+            ticket_type,
+        )
+
+    async def close_ticket(self, channel_id: int):
+        await self.execute(
+            """
+            UPDATE tickets
+            SET closed = TRUE
+            WHERE channel_id = $1
+            """,
+            channel_id,
+        )
+
+    async def get_open_ticket(
+        self,
+        owner_id: int,
+        ticket_type: str,
+    ):
+        return await self.fetchrow(
+            """
+            SELECT
+                channel_id,
+                owner_id,
+                ticket_type,
+                closed
+            FROM tickets
+            WHERE owner_id = $1
+              AND ticket_type = $2
+              AND closed = FALSE
+            LIMIT 1
+            """,
+            owner_id,
+            ticket_type,
+        )
 
     # --------------------------------------------------
     # GUILD SETTINGS
@@ -83,7 +209,7 @@ class Database:
 
     async def get_guild_settings(
         self,
-        guild_id: int
+        guild_id: int,
     ) -> Optional[dict]:
 
         if not self.pool:
@@ -92,7 +218,6 @@ class Database:
             )
 
         async with self.pool.acquire() as conn:
-
             row = await conn.fetchrow(
                 """
                 SELECT
@@ -120,10 +245,6 @@ class Database:
                 "marriage_channel": row["marriage_channel"],
                 "relationship_channel": row["relationship_channel"],
                 "ticket_category": row["ticket_category"],
-
-                # Your current database table does not appear
-                # to contain an enforce_only_post column.
-                # Keep this key available for other code.
                 "enforce_only_post": False,
             }
 
@@ -145,7 +266,6 @@ class Database:
             )
 
         async with self.pool.acquire() as conn:
-
             await conn.execute(
                 """
                 INSERT INTO guild_settings (
@@ -157,7 +277,7 @@ class Database:
                     marriage_channel,
                     relationship_channel
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
 
                 ON CONFLICT (guild_id)
                 DO UPDATE SET
@@ -171,10 +291,12 @@ class Database:
                         EXCLUDED.admin_role,
                         guild_settings.admin_role
                     ),
+
                     staff_role = COALESCE(
                         EXCLUDED.staff_role,
                         guild_settings.staff_role
                     ),
+
                     ticket_category = COALESCE(
                         EXCLUDED.ticket_category,
                         guild_settings.ticket_category
@@ -193,7 +315,7 @@ class Database:
                 guild_id,
                 log_channel_id,
                 admin_role_id,
-                staff_role,
+                staff_role_id,
                 ticket_category_id,
                 marriage_channel_id,
                 relationship_channel_id,
