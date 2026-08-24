@@ -147,13 +147,6 @@ class Tickets(commands.Cog):
             "✅ Ticket panel created.",
             ephemeral=True,
         )
-
-        await add_panel(
-            interaction.guild.id,
-            interaction.channel.id,
-            msg.id,
-            panel,
-        )
         await add_panel(
             interaction.guild.id,
             interaction.channel.id,
