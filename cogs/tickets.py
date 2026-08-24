@@ -15,13 +15,6 @@ from views.ticket_views import (
     ContactTicketView,
 )
 
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
-
-TICKET_CATEGORY_ID = 1526141859213086841   # ACTIVE TICKETS CATEGORY
-STAFF_ROLE_ID = 1428444870766231622        # STAFF ROLE
-
 
 # --------------------------------------------------
 # CLOSE BUTTON
@@ -36,25 +29,41 @@ class CloseTicketButton(discord.ui.View):
         style=discord.ButtonStyle.red,
         custom_id="close_ticket_button"
     )
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
+        settings = await interaction.client.db.get_guild_settings(
+            interaction.guild.id
+        )
 
-        if staff_role not in interaction.user.roles:
+        if not settings or not settings.get("staff_role"):
+            return await interaction.response.send_message(
+                "❌ Staff role is not set up yet. Run `/setup` first.",
+                ephemeral=True
+            )
+
+        staff_role = interaction.guild.get_role(
+            settings["staff_role"]
+        )
+
+        if not staff_role or staff_role not in interaction.user.roles:
             return await interaction.response.send_message(
                 "❌ Only staff can close tickets.",
                 ephemeral=True
             )
 
         await interaction.channel.delete()
-        
+
+
 PANEL_VIEWS = {
     "verification": VerificationTicketView,
     "reports": ReportsTicketView,
     "applications": ApplicationsTicketView,
     "contact": ContactTicketView,
 }
-
 
 PANEL_CHOICES = [
     app_commands.Choice(name="Verification", value="verification"),
