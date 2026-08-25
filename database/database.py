@@ -225,8 +225,9 @@ class Database:
             channel_id,
         )
 
-    async def get_open_ticket(
+        async def get_open_ticket(
         self,
+        guild_id: int,
         owner_id: int,
         ticket_type: str,
     ):
@@ -238,11 +239,13 @@ class Database:
                 ticket_type,
                 closed
             FROM tickets
-            WHERE owner_id = $1
-              AND ticket_type = $2
+            WHERE guild_id = $1
+              AND owner_id = $2
+              AND ticket_type = $3
               AND closed = FALSE
             LIMIT 1
             """,
+            guild_id,
             owner_id,
             ticket_type,
         )
