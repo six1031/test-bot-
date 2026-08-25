@@ -256,6 +256,7 @@ class BaseTicketView(discord.ui.View):
         # --------------------------------------------------
 
         await create_ticket(
+            interaction.guild.id,
             channel.id,
             interaction.user.id,
             self.ticket_type,
