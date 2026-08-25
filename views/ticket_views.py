@@ -3,6 +3,7 @@ import discord
 from database.tickets import (
     create_ticket,
     has_open_ticket,
+    close_ticket as close_ticket_record,
 )
 
 
@@ -49,6 +50,11 @@ class CloseTicketView(discord.ui.View):
         await interaction.response.send_message(
             "🗑 Closing ticket...",
             ephemeral=True,
+        )
+
+        # Mark the ticket as closed in the database
+        await close_ticket_record(
+            interaction.channel.id
         )
 
         await interaction.channel.delete()
@@ -134,11 +140,11 @@ class BaseTicketView(discord.ui.View):
         # Staff can open unlimited tickets
         if staff_role not in interaction.user.roles:
 
-        if await has_open_ticket(
-            interaction.guild.id,
-            interaction.user.id,
-            self.ticket_type,
-        ):
+            if await has_open_ticket(
+                guild.id,
+                interaction.user.id,
+                self.ticket_type,
+            ):
                 return await interaction.response.send_message(
                     f"❌ You already have an open "
                     f"{self.ticket_type} ticket.",
@@ -151,7 +157,7 @@ class BaseTicketView(discord.ui.View):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(
-                read_messages=False
+                read_messages=False,
             ),
             interaction.user: discord.PermissionOverwrite(
                 read_messages=True,
@@ -257,7 +263,7 @@ class BaseTicketView(discord.ui.View):
         # --------------------------------------------------
 
         await create_ticket(
-            interaction.guild.id,
+            guild.id,
             channel.id,
             interaction.user.id,
             self.ticket_type,
