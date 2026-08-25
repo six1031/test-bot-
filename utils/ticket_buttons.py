@@ -44,10 +44,12 @@ class TicketTypeView(discord.ui.View):
             settings["ticket_category"]
         )
 
-        if category is None:
-            return await interaction.followup.send(
-                "❌ The configured ticket category could not be found.",
-                ephemeral=True
+      if category is None:
+        return await interaction.followup.send(
+            f"❌ Category not found.\n"
+            f"Saved category ID: `{settings['ticket_category']}`\n"
+            f"Server categories: `{[(c.name, c.id) for c in guild.categories]}`",
+            ephemeral=True
         )
         channel = await guild.create_text_channel(
             f"{ticket_type}-{interaction.user.name}",
