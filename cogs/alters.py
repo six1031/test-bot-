@@ -9,7 +9,10 @@ from database.system_profiles import (
     get_system_profile_by_id,
     get_system_profile_settings,
     add_alter_profile,
+    get_alter_profile,
     get_alter_profiles,
+    update_alter_field,
+    delete_alter_profile,
 )
 
 from cogs.system_profiles import (
@@ -48,6 +51,39 @@ def safe_text(
         )
 
     return value
+
+
+async def alter_belongs_to_user(
+    guild_id: int,
+    user_id: int,
+    alter_id: int,
+):
+
+    profile = await get_system_profile(
+        guild_id,
+        user_id,
+    )
+
+    if not profile:
+
+        return None, None
+
+    alter = await get_alter_profile(
+        alter_id
+    )
+
+    if not alter:
+
+        return profile, None
+
+    if (
+        alter["system_profile_id"]
+        != profile["id"]
+    ):
+
+        return profile, None
+
+    return profile, alter
 
 
 # ==================================================
@@ -134,7 +170,9 @@ def build_alter_embed(
     embed.add_field(
         name="📖 Source / Introject Info",
         value=safe_text(
-            alter.get("source_info")
+            alter.get(
+                "source_info"
+            )
         ),
         inline=False,
     )
@@ -142,7 +180,9 @@ def build_alter_embed(
     embed.add_field(
         name="🎨 Hobbies / Interests",
         value=safe_text(
-            alter.get("hobbies")
+            alter.get(
+                "hobbies"
+            )
         ),
         inline=False,
     )
@@ -166,7 +206,9 @@ def build_alter_embed(
     embed.add_field(
         name="💌 DM Status",
         value=safe_text(
-            alter.get("dm_status")
+            alter.get(
+                "dm_status"
+            )
         ),
         inline=True,
     )
@@ -196,7 +238,9 @@ def build_alter_embed(
     embed.add_field(
         name="🛡️ Boundaries",
         value=safe_text(
-            alter.get("boundaries")
+            alter.get(
+                "boundaries"
+            )
         ),
         inline=False,
     )
@@ -212,7 +256,9 @@ def build_alter_embed(
     embed.add_field(
         name="🧸 About Me",
         value=safe_text(
-            alter.get("about_me")
+            alter.get(
+                "about_me"
+            )
         ),
         inline=False,
     )
@@ -239,10 +285,6 @@ def build_alter_embed(
 
 # ==================================================
 # ALTER BROWSER
-#
-# This is created separately for each person who
-# clicks Browse Alters, so people don't fight over
-# which alter is currently displayed.
 # ==================================================
 
 class AlterBrowserView(
@@ -263,10 +305,7 @@ class AlterBrowserView(
         )
 
         self.bot = bot
-
-        self.viewer_id = (
-            viewer_id
-        )
+        self.viewer_id = viewer_id
 
         self.system_profile_id = (
             system_profile_id
@@ -280,25 +319,13 @@ class AlterBrowserView(
 
         self.update_buttons()
 
-    # --------------------------------------------------
-    # CURRENT ALTER
-    # --------------------------------------------------
-
-    def current_alter(
-        self,
-    ):
+    def current_alter(self):
 
         return self.alters[
             self.current_index
         ]
 
-    # --------------------------------------------------
-    # BUTTON STATE
-    # --------------------------------------------------
-
-    def update_buttons(
-        self,
-    ):
+    def update_buttons(self):
 
         total = len(
             self.alters
@@ -307,10 +334,6 @@ class AlterBrowserView(
         self.page_button.label = (
             f"{self.current_index + 1}/{total}"
         )
-
-    # --------------------------------------------------
-    # SECURITY
-    # --------------------------------------------------
 
     async def interaction_check(
         self,
@@ -322,16 +345,13 @@ class AlterBrowserView(
             != self.viewer_id
         ):
 
-            await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ Open the alter browser "
-                        "yourself using the "
-                        "**Browse Alters** button."
-                    ),
-                    ephemeral=True,
-                )
+            await interaction.response.send_message(
+                (
+                    "❌ Open the alter browser "
+                    "yourself using "
+                    "**Browse Alters**."
+                ),
+                ephemeral=True,
             )
 
             return False
@@ -366,22 +386,17 @@ class AlterBrowserView(
 
         self.update_buttons()
 
-        embed = build_alter_embed(
-            self.current_alter(),
-            self.current_index + 1,
-            len(self.alters),
-        )
-
-        await (
-            interaction.response
-            .edit_message(
-                embed=embed,
-                view=self,
-            )
+        await interaction.response.edit_message(
+            embed=build_alter_embed(
+                self.current_alter(),
+                self.current_index + 1,
+                len(self.alters),
+            ),
+            view=self,
         )
 
     # ==================================================
-    # PAGE NUMBER
+    # PAGE
     # ==================================================
 
     @discord.ui.button(
@@ -427,18 +442,13 @@ class AlterBrowserView(
 
         self.update_buttons()
 
-        embed = build_alter_embed(
-            self.current_alter(),
-            self.current_index + 1,
-            len(self.alters),
-        )
-
-        await (
-            interaction.response
-            .edit_message(
-                embed=embed,
-                view=self,
-            )
+        await interaction.response.edit_message(
+            embed=build_alter_embed(
+                self.current_alter(),
+                self.current_index + 1,
+                len(self.alters),
+            ),
+            view=self,
         )
 
     # ==================================================
@@ -459,36 +469,23 @@ class AlterBrowserView(
         button: discord.ui.Button,
     ):
 
-        try:
-
-            profile = (
-                await get_system_profile_by_id(
-                    self.system_profile_id
-                )
+        profile = (
+            await get_system_profile_by_id(
+                self.system_profile_id
             )
-
-        except Exception:
-
-            profile = None
+        )
 
         if not profile:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I couldn't load "
-                        "that System Profile."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't load "
+                    "that System Profile."
+                ),
+                ephemeral=True,
             )
 
         guild = interaction.guild
-
-        if guild is None:
-
-            return
 
         member = guild.get_member(
             profile["user_id"]
@@ -510,28 +507,19 @@ class AlterBrowserView(
 
         if member is None:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I couldn't find "
-                        "the system owner."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't find "
+                    "the system owner."
+                ),
+                ephemeral=True,
             )
 
-        try:
-
-            alters = (
-                await get_alter_profiles(
-                    self.system_profile_id
-                )
+        alters = (
+            await get_alter_profiles(
+                self.system_profile_id
             )
-
-        except Exception:
-
-            alters = []
+        )
 
         embed = (
             build_system_profile_embed(
@@ -541,12 +529,9 @@ class AlterBrowserView(
             )
         )
 
-        await (
-            interaction.response
-            .edit_message(
-                embed=embed,
-                view=self,
-            )
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self,
         )
 
     # ==================================================
@@ -569,22 +554,17 @@ class AlterBrowserView(
 
         self.stop()
 
-        await (
-            interaction.response
-            .edit_message(
-                content=(
-                    "🌸 Alter browser closed."
-                ),
-                embed=None,
-                view=None,
-            )
+        await interaction.response.edit_message(
+            content=(
+                "🌸 Alter browser closed."
+            ),
+            embed=None,
+            view=None,
         )
 
 
 # ==================================================
-# PUBLIC SYSTEM PROFILE BUTTON
-#
-# This is persistent.
+# PUBLIC BROWSE BUTTON
 # ==================================================
 
 class SystemAlterButtonView(
@@ -606,11 +586,6 @@ class SystemAlterButtonView(
         self.system_profile_id = (
             system_profile_id
         )
-
-        # --------------------------------------------------
-        # We create the button manually because its
-        # custom_id contains the System Profile ID.
-        # --------------------------------------------------
 
         button = discord.ui.Button(
             label="Browse Alters",
@@ -649,59 +624,151 @@ class SystemAlterButtonView(
 
             traceback.print_exc()
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I couldn't load "
-                        "the alter profiles."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't load "
+                    "the alter profiles."
+                ),
+                ephemeral=True,
             )
 
         if not alters:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "🌸 This system doesn't "
-                        "have any alter profiles yet."
-                    ),
-                    ephemeral=True,
-                )
-            )
-
-        browser = AlterBrowserView(
-            bot=self.bot,
-            viewer_id=(
-                interaction.user.id
-            ),
-            system_profile_id=(
-                self.system_profile_id
-            ),
-            alters=alters,
-        )
-
-        embed = build_alter_embed(
-            alters[0],
-            1,
-            len(alters),
-        )
-
-        await (
-            interaction.response
-            .send_message(
-                embed=embed,
-                view=browser,
+            return await interaction.response.send_message(
+                (
+                    "🌸 This system doesn't "
+                    "have any alter profiles yet."
+                ),
                 ephemeral=True,
             )
+
+        browser = (
+            AlterBrowserView(
+                bot=self.bot,
+                viewer_id=(
+                    interaction.user.id
+                ),
+                system_profile_id=(
+                    self.system_profile_id
+                ),
+                alters=alters,
+            )
+        )
+
+        await interaction.response.send_message(
+            embed=build_alter_embed(
+                alters[0],
+                1,
+                len(alters),
+            ),
+            view=browser,
+            ephemeral=True,
         )
 
 
 # ==================================================
-# ALTER FORM - PAGE 1
+# REFRESH PUBLIC SYSTEM PROFILE
+# ==================================================
+
+async def refresh_system_profile_message(
+    bot,
+    guild: discord.Guild,
+    profile: dict,
+):
+
+    try:
+
+        settings = (
+            await get_system_profile_settings(
+                guild.id
+            )
+        )
+
+        if not settings:
+
+            return
+
+        channel_id = (
+            settings.get(
+                "profile_channel_id"
+            )
+        )
+
+        if not channel_id:
+
+            return
+
+        channel = guild.get_channel(
+            channel_id
+        )
+
+        if channel is None:
+
+            return
+
+        message_id = profile.get(
+            "profile_message_id"
+        )
+
+        if not message_id:
+
+            return
+
+        member = guild.get_member(
+            profile["user_id"]
+        )
+
+        if member is None:
+
+            try:
+
+                member = (
+                    await guild.fetch_member(
+                        profile["user_id"]
+                    )
+                )
+
+            except Exception:
+
+                return
+
+        alters = (
+            await get_alter_profiles(
+                profile["id"]
+            )
+        )
+
+        message = (
+            await channel.fetch_message(
+                message_id
+            )
+        )
+
+        await message.edit(
+            embed=(
+                build_system_profile_embed(
+                    member,
+                    profile,
+                    len(alters),
+                )
+            ),
+            view=(
+                SystemAlterButtonView(
+                    bot,
+                    profile["id"],
+                )
+            ),
+        )
+
+    except Exception:
+
+        traceback.print_exc()
+
+
+# ==================================================
+# ALTER BASIC FORM
+#
+# Used for BOTH add and edit.
 # ==================================================
 
 class AlterBasicModal(
@@ -714,10 +781,16 @@ class AlterBasicModal(
         guild_id: int,
         user_id: int,
         system_profile_id: int,
+        existing: dict | None = None,
+        alter_id: int | None = None,
     ):
 
         super().__init__(
-            title="Alter Profile - Basics"
+            title=(
+                "Edit Alter - Basics"
+                if alter_id
+                else "Alter Profile - Basics"
+            )
         )
 
         self.bot = bot
@@ -728,9 +801,11 @@ class AlterBasicModal(
             system_profile_id
         )
 
-        # --------------------------------------------------
-        # NAME
-        # --------------------------------------------------
+        self.existing = (
+            dict(existing or {})
+        )
+
+        self.alter_id = alter_id
 
         self.name_input = (
             discord.ui.TextInput(
@@ -740,27 +815,29 @@ class AlterBasicModal(
                 ),
                 required=True,
                 max_length=100,
+                default=(
+                    self.existing.get(
+                        "name"
+                    )
+                    or ""
+                ),
             )
         )
-
-        # --------------------------------------------------
-        # NICKNAMES
-        # --------------------------------------------------
 
         self.nicknames = (
             discord.ui.TextInput(
                 label="Nickname(s)",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 max_length=150,
+                default=(
+                    self.existing.get(
+                        "nicknames"
+                    )
+                    or ""
+                ),
             )
         )
-
-        # --------------------------------------------------
-        # PRONOUNS
-        # --------------------------------------------------
 
         self.pronouns = (
             discord.ui.TextInput(
@@ -770,36 +847,42 @@ class AlterBasicModal(
                 ),
                 required=False,
                 max_length=100,
+                default=(
+                    self.existing.get(
+                        "pronouns"
+                    )
+                    or ""
+                ),
             )
         )
-
-        # --------------------------------------------------
-        # AGE
-        # --------------------------------------------------
 
         self.age = (
             discord.ui.TextInput(
                 label="Age / Age Range",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 max_length=100,
+                default=(
+                    self.existing.get(
+                        "age"
+                    )
+                    or ""
+                ),
             )
         )
-
-        # --------------------------------------------------
-        # PROXY / EMOJI
-        # --------------------------------------------------
 
         self.proxy_emoji = (
             discord.ui.TextInput(
                 label="Proxy / Emoji",
-                placeholder=(
-                    "Example: 🌸"
-                ),
+                placeholder="Example: 🌸",
                 required=False,
                 max_length=100,
+                default=(
+                    self.existing.get(
+                        "proxy_emoji"
+                    )
+                    or ""
+                ),
             )
         )
 
@@ -828,51 +911,55 @@ class AlterBasicModal(
         interaction: discord.Interaction,
     ):
 
-        data = {
-            "name":
-                str(
-                    self.name_input.value
-                ).strip(),
+        data = dict(
+            self.existing
+        )
 
-            "nicknames":
-                str(
-                    self.nicknames.value
-                ).strip(),
+        data.update(
+            {
+                "name":
+                    str(
+                        self.name_input.value
+                    ).strip(),
 
-            "pronouns":
-                str(
-                    self.pronouns.value
-                ).strip(),
+                "nicknames":
+                    str(
+                        self.nicknames.value
+                    ).strip(),
 
-            "age":
-                str(
-                    self.age.value
-                ).strip(),
+                "pronouns":
+                    str(
+                        self.pronouns.value
+                    ).strip(),
 
-            "proxy_emoji":
-                str(
-                    self.proxy_emoji.value
-                ).strip(),
-        }
+                "age":
+                    str(
+                        self.age.value
+                    ).strip(),
 
-        await (
-            interaction.response
-            .send_modal(
-                AlterIdentityModal(
-                    bot=self.bot,
-                    guild_id=self.guild_id,
-                    user_id=self.user_id,
-                    system_profile_id=(
-                        self.system_profile_id
-                    ),
-                    data=data,
-                )
+                "proxy_emoji":
+                    str(
+                        self.proxy_emoji.value
+                    ).strip(),
+            }
+        )
+
+        await interaction.response.send_modal(
+            AlterIdentityModal(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                system_profile_id=(
+                    self.system_profile_id
+                ),
+                data=data,
+                alter_id=self.alter_id,
             )
         )
 
 
 # ==================================================
-# ALTER FORM - PAGE 2
+# ALTER IDENTITY FORM
 # ==================================================
 
 class AlterIdentityModal(
@@ -886,10 +973,15 @@ class AlterIdentityModal(
         user_id: int,
         system_profile_id: int,
         data: dict,
+        alter_id: int | None = None,
     ):
 
         super().__init__(
-            title="Alter Profile - Identity"
+            title=(
+                "Edit Alter - Identity"
+                if alter_id
+                else "Alter Profile - Identity"
+            )
         )
 
         self.bot = bot
@@ -901,51 +993,68 @@ class AlterIdentityModal(
         )
 
         self.data = data
+        self.alter_id = alter_id
 
         self.gender = (
             discord.ui.TextInput(
                 label="Gender",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 max_length=100,
+                default=(
+                    data.get(
+                        "gender"
+                    )
+                    or ""
+                ),
             )
         )
 
         self.system_role = (
             discord.ui.TextInput(
                 label="Role in the System",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 max_length=150,
+                default=(
+                    data.get(
+                        "system_role"
+                    )
+                    or ""
+                ),
             )
         )
 
         self.species_identity = (
             discord.ui.TextInput(
                 label="Species / Identity",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 max_length=150,
+                default=(
+                    data.get(
+                        "species_identity"
+                    )
+                    or ""
+                ),
             )
         )
 
         self.source_info = (
             discord.ui.TextInput(
                 label="Source / Introject Info",
-                placeholder=(
-                    "Optional"
-                ),
+                placeholder="Optional",
                 required=False,
                 style=(
                     discord.TextStyle.paragraph
                 ),
                 max_length=500,
+                default=(
+                    data.get(
+                        "source_info"
+                    )
+                    or ""
+                ),
             )
         )
 
@@ -960,6 +1069,12 @@ class AlterIdentityModal(
                     discord.TextStyle.paragraph
                 ),
                 max_length=500,
+                default=(
+                    data.get(
+                        "hobbies"
+                    )
+                    or ""
+                ),
             )
         )
 
@@ -1026,21 +1141,19 @@ class AlterIdentityModal(
                     self.system_profile_id
                 ),
                 data=self.data,
+                alter_id=self.alter_id,
             )
         )
 
-        await (
-            interaction.response
-            .send_message(
-                view.status_text(),
-                view=view,
-                ephemeral=True,
-            )
+        await interaction.response.send_message(
+            view.status_text(),
+            view=view,
+            ephemeral=True,
         )
 
 
 # ==================================================
-# ALTER SOCIAL SETTINGS
+# SOCIAL CHOICES
 # ==================================================
 
 class AlterSocialChoicesView(
@@ -1054,6 +1167,7 @@ class AlterSocialChoicesView(
         user_id: int,
         system_profile_id: int,
         data: dict,
+        alter_id: int | None = None,
     ):
 
         super().__init__(
@@ -1070,15 +1184,11 @@ class AlterSocialChoicesView(
 
         self.data = data
 
-        # --------------------------------------------------
-        # DM STATUS
-        # --------------------------------------------------
+        self.alter_id = alter_id
 
         self.dm_select = (
             discord.ui.Select(
-                placeholder=(
-                    "Choose DM status"
-                ),
+                placeholder="Choose DM status",
                 row=0,
                 options=[
                     discord.SelectOption(
@@ -1099,10 +1209,6 @@ class AlterSocialChoicesView(
             )
         )
 
-        # --------------------------------------------------
-        # INTERACTION STATUS
-        # --------------------------------------------------
-
         self.interaction_select = (
             discord.ui.Select(
                 placeholder=(
@@ -1119,16 +1225,12 @@ class AlterSocialChoicesView(
 
                     discord.SelectOption(
                         label="Ask First",
-                        value=(
-                            "🟡 Ask First"
-                        ),
+                        value="🟡 Ask First",
                     ),
 
                     discord.SelectOption(
                         label="Limited",
-                        value=(
-                            "🟠 Limited"
-                        ),
+                        value="🟠 Limited",
                     ),
 
                     discord.SelectOption(
@@ -1141,15 +1243,9 @@ class AlterSocialChoicesView(
             )
         )
 
-        # --------------------------------------------------
-        # FREQUENT FRONTER
-        # --------------------------------------------------
-
         self.frontal_select = (
             discord.ui.Select(
-                placeholder=(
-                    "Frequent fronter?"
-                ),
+                placeholder="Frequent fronter?",
                 row=2,
                 options=[
                     discord.SelectOption(
@@ -1189,9 +1285,7 @@ class AlterSocialChoicesView(
             self.frontal_select
         )
 
-    def status_text(
-        self,
-    ):
+    def status_text(self):
 
         frequent = (
             "Yes"
@@ -1202,11 +1296,10 @@ class AlterSocialChoicesView(
 
             else (
                 "No"
-                if self.data.get(
+                if (
                     "frequent_fronter"
+                    in self.data
                 )
-                is False
-
                 else "Not set"
             )
         )
@@ -1236,17 +1329,6 @@ class AlterSocialChoicesView(
             != self.user_id
         ):
 
-            await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ This alter profile "
-                        "isn't yours to edit."
-                    ),
-                    ephemeral=True,
-                )
-            )
-
             return False
 
         return True
@@ -1260,12 +1342,9 @@ class AlterSocialChoicesView(
             self.dm_select.values[0]
         )
 
-        await (
-            interaction.response
-            .edit_message(
-                content=self.status_text(),
-                view=self,
-            )
+        await interaction.response.edit_message(
+            content=self.status_text(),
+            view=self,
         )
 
     async def interaction_callback(
@@ -1280,12 +1359,9 @@ class AlterSocialChoicesView(
             .values[0]
         )
 
-        await (
-            interaction.response
-            .edit_message(
-                content=self.status_text(),
-                view=self,
-            )
+        await interaction.response.edit_message(
+            content=self.status_text(),
+            view=self,
         )
 
     async def frontal_callback(
@@ -1301,12 +1377,9 @@ class AlterSocialChoicesView(
             == "yes"
         )
 
-        await (
-            interaction.response
-            .edit_message(
-                content=self.status_text(),
-                view=self,
-            )
+        await interaction.response.edit_message(
+            content=self.status_text(),
+            view=self,
         )
 
     @discord.ui.button(
@@ -1352,37 +1425,32 @@ class AlterSocialChoicesView(
 
         if missing:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ Please choose: "
-                        + ", ".join(
-                            missing
-                        )
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ Please choose: "
+                    + ", ".join(
+                        missing
+                    )
+                ),
+                ephemeral=True,
             )
 
-        await (
-            interaction.response
-            .send_modal(
-                AlterFinalModal(
-                    bot=self.bot,
-                    guild_id=self.guild_id,
-                    user_id=self.user_id,
-                    system_profile_id=(
-                        self.system_profile_id
-                    ),
-                    data=self.data,
-                )
+        await interaction.response.send_modal(
+            AlterFinalModal(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                system_profile_id=(
+                    self.system_profile_id
+                ),
+                data=self.data,
+                alter_id=self.alter_id,
             )
         )
 
 
 # ==================================================
-# ALTER FORM - FINAL PAGE
+# FINAL FORM
 # ==================================================
 
 class AlterFinalModal(
@@ -1396,10 +1464,15 @@ class AlterFinalModal(
         user_id: int,
         system_profile_id: int,
         data: dict,
+        alter_id: int | None = None,
     ):
 
         super().__init__(
-            title="Alter Profile - About"
+            title=(
+                "Edit Alter - About"
+                if alter_id
+                else "Alter Profile - About"
+            )
         )
 
         self.bot = bot
@@ -1411,32 +1484,37 @@ class AlterFinalModal(
         )
 
         self.data = data
+        self.alter_id = alter_id
 
         self.likes = (
             discord.ui.TextInput(
                 label="Likes",
-                placeholder=(
-                    "Things they like"
-                ),
+                placeholder="Things they like",
                 required=False,
                 style=(
                     discord.TextStyle.paragraph
                 ),
                 max_length=500,
+                default=(
+                    data.get("likes")
+                    or ""
+                ),
             )
         )
 
         self.dislikes = (
             discord.ui.TextInput(
                 label="Dislikes",
-                placeholder=(
-                    "Things they dislike"
-                ),
+                placeholder="Things they dislike",
                 required=False,
                 style=(
                     discord.TextStyle.paragraph
                 ),
                 max_length=500,
+                default=(
+                    data.get("dislikes")
+                    or ""
+                ),
             )
         )
 
@@ -1451,6 +1529,10 @@ class AlterFinalModal(
                     discord.TextStyle.paragraph
                 ),
                 max_length=700,
+                default=(
+                    data.get("boundaries")
+                    or ""
+                ),
             )
         )
 
@@ -1465,6 +1547,10 @@ class AlterFinalModal(
                     discord.TextStyle.paragraph
                 ),
                 max_length=700,
+                default=(
+                    data.get("dni")
+                    or ""
+                ),
             )
         )
 
@@ -1479,6 +1565,10 @@ class AlterFinalModal(
                     discord.TextStyle.paragraph
                 ),
                 max_length=700,
+                default=(
+                    data.get("about_me")
+                    or ""
+                ),
             )
         )
 
@@ -1536,41 +1626,33 @@ class AlterFinalModal(
             }
         )
 
-        embed = (
-            build_alter_embed(
+        view = AlterPreviewView(
+            bot=self.bot,
+            guild_id=self.guild_id,
+            user_id=self.user_id,
+            system_profile_id=(
+                self.system_profile_id
+            ),
+            data=self.data,
+            alter_id=self.alter_id,
+        )
+
+        await interaction.response.send_message(
+            (
+                "🌸 **Alter Profile Preview**\n\n"
+                "Check everything below, "
+                "then press **Save Alter**."
+            ),
+            embed=build_alter_embed(
                 self.data
-            )
-        )
-
-        view = (
-            AlterPreviewView(
-                bot=self.bot,
-                guild_id=self.guild_id,
-                user_id=self.user_id,
-                system_profile_id=(
-                    self.system_profile_id
-                ),
-                data=self.data,
-            )
-        )
-
-        await (
-            interaction.response
-            .send_message(
-                (
-                    "🌸 **Alter Profile Preview**\n\n"
-                    "Check everything below, "
-                    "then press **Save Alter**."
-                ),
-                embed=embed,
-                view=view,
-                ephemeral=True,
-            )
+            ),
+            view=view,
+            ephemeral=True,
         )
 
 
 # ==================================================
-# ALTER PREVIEW / SAVE
+# SAVE ADD / EDIT
 # ==================================================
 
 class AlterPreviewView(
@@ -1584,6 +1666,7 @@ class AlterPreviewView(
         user_id: int,
         system_profile_id: int,
         data: dict,
+        alter_id: int | None = None,
     ):
 
         super().__init__(
@@ -1599,20 +1682,17 @@ class AlterPreviewView(
         )
 
         self.data = data
+        self.alter_id = alter_id
 
     async def interaction_check(
         self,
         interaction: discord.Interaction,
     ):
 
-        if (
+        return (
             interaction.user.id
-            != self.user_id
-        ):
-
-            return False
-
-        return True
+            == self.user_id
+        )
 
     # ==================================================
     # SAVE
@@ -1631,32 +1711,20 @@ class AlterPreviewView(
         button: discord.ui.Button,
     ):
 
-        await (
-            interaction.response
-            .defer(
-                ephemeral=True
-            )
+        await interaction.response.defer(
+            ephemeral=True
         )
 
-        guild = (
-            self.bot.get_guild(
-                self.guild_id
-            )
+        guild = self.bot.get_guild(
+            self.guild_id
         )
 
         if guild is None:
 
-            return await (
-                interaction.followup
-                .send(
-                    "❌ I couldn't find the server.",
-                    ephemeral=True,
-                )
+            return await interaction.followup.send(
+                "❌ I couldn't find the server.",
+                ephemeral=True,
             )
-
-        # --------------------------------------------------
-        # CHECK SYSTEM STILL BELONGS TO USER
-        # --------------------------------------------------
 
         profile = (
             await get_system_profile(
@@ -1671,239 +1739,248 @@ class AlterPreviewView(
             != self.system_profile_id
         ):
 
-            return await (
-                interaction.followup
-                .send(
+            return await interaction.followup.send(
+                (
+                    "❌ I couldn't find "
+                    "your System Profile."
+                ),
+                ephemeral=True,
+            )
+
+        # ==================================================
+        # EDIT EXISTING ALTER
+        # ==================================================
+
+        if self.alter_id:
+
+            try:
+
+                current = (
+                    await get_alter_profile(
+                        self.alter_id
+                    )
+                )
+
+                if (
+                    not current
+                    or current[
+                        "system_profile_id"
+                    ]
+                    != self.system_profile_id
+                ):
+
+                    return await interaction.followup.send(
+                        (
+                            "❌ That alter profile "
+                            "doesn't belong to you."
+                        ),
+                        ephemeral=True,
+                    )
+
+                editable_fields = [
+                    "name",
+                    "nicknames",
+                    "pronouns",
+                    "gender",
+                    "age",
+                    "system_role",
+                    "species_identity",
+                    "source_info",
+                    "proxy_emoji",
+                    "likes",
+                    "dislikes",
+                    "hobbies",
+                    "dm_status",
+                    "interaction_status",
+                    "boundaries",
+                    "dni",
+                    "frequent_fronter",
+                    "about_me",
+                ]
+
+                for field in editable_fields:
+
+                    await update_alter_field(
+                        self.alter_id,
+                        field,
+                        self.data.get(
+                            field
+                        ),
+                    )
+
+                saved_alter_id = (
+                    self.alter_id
+                )
+
+                action_text = (
+                    "updated"
+                )
+
+            except Exception:
+
+                traceback.print_exc()
+
+                return await interaction.followup.send(
                     (
-                        "❌ I couldn't find "
-                        "your System Profile."
+                        "❌ I couldn't update "
+                        "the alter profile."
                     ),
                     ephemeral=True,
                 )
-            )
 
-        # --------------------------------------------------
-        # SAVE ALTER
-        # --------------------------------------------------
+        # ==================================================
+        # ADD NEW ALTER
+        # ==================================================
 
-        try:
+        else:
 
-            alter_id = (
-                await add_alter_profile(
-                    system_profile_id=(
-                        self.system_profile_id
-                    ),
+            try:
 
-                    name=(
-                        self.data.get(
-                            "name"
-                        )
-                    ),
+                saved_alter_id = (
+                    await add_alter_profile(
+                        system_profile_id=(
+                            self.system_profile_id
+                        ),
 
-                    nicknames=(
-                        self.data.get(
-                            "nicknames"
-                        )
-                    ),
+                        name=(
+                            self.data.get(
+                                "name"
+                            )
+                        ),
 
-                    pronouns=(
-                        self.data.get(
-                            "pronouns"
-                        )
-                    ),
+                        nicknames=(
+                            self.data.get(
+                                "nicknames"
+                            )
+                        ),
 
-                    gender=(
-                        self.data.get(
-                            "gender"
-                        )
-                    ),
+                        pronouns=(
+                            self.data.get(
+                                "pronouns"
+                            )
+                        ),
 
-                    age=(
-                        self.data.get(
-                            "age"
-                        )
-                    ),
+                        gender=(
+                            self.data.get(
+                                "gender"
+                            )
+                        ),
 
-                    system_role=(
-                        self.data.get(
-                            "system_role"
-                        )
-                    ),
+                        age=(
+                            self.data.get(
+                                "age"
+                            )
+                        ),
 
-                    species_identity=(
-                        self.data.get(
-                            "species_identity"
-                        )
-                    ),
+                        system_role=(
+                            self.data.get(
+                                "system_role"
+                            )
+                        ),
 
-                    source_info=(
-                        self.data.get(
-                            "source_info"
-                        )
-                    ),
+                        species_identity=(
+                            self.data.get(
+                                "species_identity"
+                            )
+                        ),
 
-                    proxy_emoji=(
-                        self.data.get(
-                            "proxy_emoji"
-                        )
-                    ),
+                        source_info=(
+                            self.data.get(
+                                "source_info"
+                            )
+                        ),
 
-                    likes=(
-                        self.data.get(
-                            "likes"
-                        )
-                    ),
+                        proxy_emoji=(
+                            self.data.get(
+                                "proxy_emoji"
+                            )
+                        ),
 
-                    dislikes=(
-                        self.data.get(
-                            "dislikes"
-                        )
-                    ),
+                        likes=(
+                            self.data.get(
+                                "likes"
+                            )
+                        ),
 
-                    hobbies=(
-                        self.data.get(
-                            "hobbies"
-                        )
-                    ),
+                        dislikes=(
+                            self.data.get(
+                                "dislikes"
+                            )
+                        ),
 
-                    dm_status=(
-                        self.data.get(
-                            "dm_status"
-                        )
-                    ),
+                        hobbies=(
+                            self.data.get(
+                                "hobbies"
+                            )
+                        ),
 
-                    interaction_status=(
-                        self.data.get(
-                            "interaction_status"
-                        )
-                    ),
+                        dm_status=(
+                            self.data.get(
+                                "dm_status"
+                            )
+                        ),
 
-                    boundaries=(
-                        self.data.get(
-                            "boundaries"
-                        )
-                    ),
+                        interaction_status=(
+                            self.data.get(
+                                "interaction_status"
+                            )
+                        ),
 
-                    dni=(
-                        self.data.get(
-                            "dni"
-                        )
-                    ),
+                        boundaries=(
+                            self.data.get(
+                                "boundaries"
+                            )
+                        ),
 
-                    frequent_fronter=(
-                        self.data.get(
-                            "frequent_fronter",
-                            False,
-                        )
-                    ),
+                        dni=(
+                            self.data.get(
+                                "dni"
+                            )
+                        ),
 
-                    about_me=(
-                        self.data.get(
-                            "about_me"
-                        )
-                    ),
+                        frequent_fronter=(
+                            self.data.get(
+                                "frequent_fronter",
+                                False,
+                            )
+                        ),
+
+                        about_me=(
+                            self.data.get(
+                                "about_me"
+                            )
+                        ),
+                    )
                 )
-            )
 
-        except Exception:
+                action_text = (
+                    "added"
+                )
 
-            traceback.print_exc()
+            except Exception:
 
-            return await (
-                interaction.followup
-                .send(
+                traceback.print_exc()
+
+                return await interaction.followup.send(
                     (
                         "❌ I couldn't save "
                         "the alter profile."
                     ),
                     ephemeral=True,
                 )
-            )
 
         # --------------------------------------------------
-        # GET UPDATED ALTER LIST
+        # REFRESH PUBLIC PROFILE
         # --------------------------------------------------
 
-        try:
-
-            alters = (
-                await get_alter_profiles(
-                    self.system_profile_id
-                )
-            )
-
-        except Exception:
-
-            alters = []
+        await refresh_system_profile_message(
+            self.bot,
+            guild,
+            profile,
+        )
 
         # --------------------------------------------------
-        # UPDATE PUBLIC SYSTEM PROFILE MESSAGE
-        # --------------------------------------------------
-
-        try:
-
-            settings = (
-                await get_system_profile_settings(
-                    guild.id
-                )
-            )
-
-            channel = None
-
-            if settings:
-
-                channel = (
-                    guild.get_channel(
-                        settings[
-                            "profile_channel_id"
-                        ]
-                    )
-                )
-
-            member = guild.get_member(
-                self.user_id
-            )
-
-            if (
-                channel
-                and member
-                and profile.get(
-                    "profile_message_id"
-                )
-            ):
-
-                message = (
-                    await channel.fetch_message(
-                        profile[
-                            "profile_message_id"
-                        ]
-                    )
-                )
-
-                system_embed = (
-                    build_system_profile_embed(
-                        member,
-                        profile,
-                        len(alters),
-                    )
-                )
-
-                await message.edit(
-                    embed=system_embed,
-                    view=(
-                        SystemAlterButtonView(
-                            self.bot,
-                            self.system_profile_id,
-                        )
-                    ),
-                )
-
-        except Exception:
-
-            traceback.print_exc()
-
-        # --------------------------------------------------
-        # DISABLE PREVIEW
+        # DISABLE PREVIEW BUTTONS
         # --------------------------------------------------
 
         for child in self.children:
@@ -1920,18 +1997,21 @@ class AlterPreviewView(
 
             pass
 
-        await (
-            interaction.followup
-            .send(
-                (
-                    f"✅ **{self.data.get('name')}** "
-                    "has been added to your System Profile!\n\n"
-                    f"Alter ID: `{alter_id}`\n"
-                    f"You now have **{len(alters)}** "
-                    "alter profile(s)."
-                ),
-                ephemeral=True,
+        alters = (
+            await get_alter_profiles(
+                self.system_profile_id
             )
+        )
+
+        await interaction.followup.send(
+            (
+                f"✅ **{self.data.get('name')}** "
+                f"has been {action_text}!\n\n"
+                f"Alter ID: `{saved_alter_id}`\n"
+                f"System now has "
+                f"**{len(alters)}** alter profile(s)."
+            ),
+            ephemeral=True,
         )
 
         self.stop()
@@ -1955,15 +2035,168 @@ class AlterPreviewView(
 
         self.stop()
 
-        await (
-            interaction.response
-            .edit_message(
+        await interaction.response.edit_message(
+            content=(
+                "❌ Alter profile cancelled."
+            ),
+            embed=None,
+            view=None,
+        )
+
+
+# ==================================================
+# REMOVE CONFIRMATION
+# ==================================================
+
+class DeleteAlterConfirmView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        bot,
+        guild_id: int,
+        user_id: int,
+        profile: dict,
+        alter: dict,
+    ):
+
+        super().__init__(
+            timeout=120
+        )
+
+        self.bot = bot
+
+        self.guild_id = guild_id
+        self.user_id = user_id
+
+        self.profile = profile
+        self.alter = alter
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if (
+            interaction.user.id
+            != self.user_id
+        ):
+
+            await interaction.response.send_message(
+                (
+                    "❌ This confirmation "
+                    "isn't for you."
+                ),
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    # ==================================================
+    # DELETE
+    # ==================================================
+
+    @discord.ui.button(
+        label="Delete Alter",
+        emoji="🗑️",
+        style=(
+            discord.ButtonStyle.danger
+        ),
+    )
+    async def confirm_delete(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        try:
+
+            await delete_alter_profile(
+                self.alter["id"]
+            )
+
+        except Exception:
+
+            traceback.print_exc()
+
+            return await interaction.followup.send(
+                (
+                    "❌ I couldn't delete "
+                    "the alter profile."
+                ),
+                ephemeral=True,
+            )
+
+        guild = self.bot.get_guild(
+            self.guild_id
+        )
+
+        if guild:
+
+            await refresh_system_profile_message(
+                self.bot,
+                guild,
+                self.profile,
+            )
+
+        self.stop()
+
+        try:
+
+            await interaction.message.edit(
                 content=(
-                    "❌ Alter profile cancelled."
+                    f"🗑️ **{self.alter['name']}** "
+                    "has been removed from "
+                    "the System Profile."
                 ),
                 embed=None,
                 view=None,
             )
+
+        except discord.HTTPException:
+
+            pass
+
+        await interaction.followup.send(
+            (
+                f"✅ **{self.alter['name']}** "
+                "was deleted."
+            ),
+            ephemeral=True,
+        )
+
+    # ==================================================
+    # CANCEL DELETE
+    # ==================================================
+
+    @discord.ui.button(
+        label="Cancel",
+        emoji="✖️",
+        style=(
+            discord.ButtonStyle.secondary
+        ),
+    )
+    async def cancel_delete(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        self.stop()
+
+        await interaction.response.edit_message(
+            content=(
+                "✅ Nothing was deleted."
+            ),
+            embed=None,
+            view=None,
         )
 
 
@@ -1990,12 +2223,10 @@ class Alters(
         self.bot = bot
 
     # ==================================================
-    # RESTORE PUBLIC BROWSE BUTTONS
+    # RESTORE PUBLIC BUTTONS AFTER REDEPLOY
     # ==================================================
 
-    async def cog_load(
-        self,
-    ):
+    async def cog_load(self):
 
         try:
 
@@ -2031,23 +2262,15 @@ class Alters(
 
             try:
 
-                system_profile_id = (
-                    row["id"]
-                )
-
-                message_id = (
-                    row[
-                        "profile_message_id"
-                    ]
-                )
-
                 self.bot.add_view(
                     SystemAlterButtonView(
                         self.bot,
-                        system_profile_id,
+                        row["id"],
                     ),
                     message_id=(
-                        message_id
+                        row[
+                            "profile_message_id"
+                        ]
                     ),
                 )
 
@@ -2057,7 +2280,7 @@ class Alters(
 
                 print(
                     (
-                        "⚠️ Couldn't restore "
+                        f"⚠️ Couldn't restore "
                         f"System Profile "
                         f"{row['id']}: {e}"
                     )
@@ -2085,10 +2308,6 @@ class Alters(
         interaction: discord.Interaction,
     ):
 
-        # --------------------------------------------------
-        # SYSTEM PROFILE REQUIRED
-        # --------------------------------------------------
-
         try:
 
             profile = (
@@ -2106,37 +2325,27 @@ class Alters(
 
         if not profile:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ You need a "
-                        "System Profile first.\n\n"
-                        "Use `/systemprofile setup`."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ You need a "
+                    "System Profile first.\n\n"
+                    "Use `/systemprofile setup`."
+                ),
+                ephemeral=True,
             )
 
-        # --------------------------------------------------
-        # START ALTER FORM
-        # --------------------------------------------------
-
-        await (
-            interaction.response
-            .send_modal(
-                AlterBasicModal(
-                    bot=self.bot,
-                    guild_id=(
-                        interaction.guild.id
-                    ),
-                    user_id=(
-                        interaction.user.id
-                    ),
-                    system_profile_id=(
-                        profile["id"]
-                    ),
-                )
+        await interaction.response.send_modal(
+            AlterBasicModal(
+                bot=self.bot,
+                guild_id=(
+                    interaction.guild.id
+                ),
+                user_id=(
+                    interaction.user.id
+                ),
+                system_profile_id=(
+                    profile["id"]
+                ),
             )
         )
 
@@ -2164,15 +2373,12 @@ class Alters(
 
         if not profile:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ You don't have "
-                        "a System Profile."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "❌ You don't have "
+                    "a System Profile."
+                ),
+                ephemeral=True,
             )
 
         alters = (
@@ -2183,16 +2389,13 @@ class Alters(
 
         if not alters:
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "🌸 You haven't added "
-                        "any alter profiles yet.\n\n"
-                        "Use `/alter add`."
-                    ),
-                    ephemeral=True,
-                )
+            return await interaction.response.send_message(
+                (
+                    "🌸 You haven't added "
+                    "any alter profiles yet.\n\n"
+                    "Use `/alter add`."
+                ),
+                ephemeral=True,
             )
 
         lines = []
@@ -2238,12 +2441,187 @@ class Alters(
             )
         )
 
-        await (
-            interaction.response
-            .send_message(
-                embed=embed,
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True,
+        )
+
+    # ==================================================
+    # /ALTER EDIT
+    # ==================================================
+
+    @alter.command(
+        name="edit",
+        description=(
+            "Edit one of your alter profiles."
+        ),
+    )
+    @app_commands.describe(
+        alter_id=(
+            "Alter ID shown by /alter list"
+        ),
+    )
+    async def edit_alter(
+        self,
+        interaction: discord.Interaction,
+        alter_id: int,
+    ):
+
+        try:
+
+            profile, alter = (
+                await alter_belongs_to_user(
+                    interaction.guild.id,
+                    interaction.user.id,
+                    alter_id,
+                )
+            )
+
+        except Exception:
+
+            traceback.print_exc()
+
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't load "
+                    "that alter profile."
+                ),
                 ephemeral=True,
             )
+
+        if not profile:
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You don't have "
+                    "a System Profile."
+                ),
+                ephemeral=True,
+            )
+
+        if not alter:
+
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't find an alter "
+                    "with that ID on your system.\n\n"
+                    "Use `/alter list` to check "
+                    "the correct ID."
+                ),
+                ephemeral=True,
+            )
+
+        await interaction.response.send_modal(
+            AlterBasicModal(
+                bot=self.bot,
+                guild_id=(
+                    interaction.guild.id
+                ),
+                user_id=(
+                    interaction.user.id
+                ),
+                system_profile_id=(
+                    profile["id"]
+                ),
+                existing=alter,
+                alter_id=alter_id,
+            )
+        )
+
+    # ==================================================
+    # /ALTER REMOVE
+    # ==================================================
+
+    @alter.command(
+        name="remove",
+        description=(
+            "Remove an alter from your System Profile."
+        ),
+    )
+    @app_commands.describe(
+        alter_id=(
+            "Alter ID shown by /alter list"
+        ),
+    )
+    async def remove_alter(
+        self,
+        interaction: discord.Interaction,
+        alter_id: int,
+    ):
+
+        try:
+
+            profile, alter = (
+                await alter_belongs_to_user(
+                    interaction.guild.id,
+                    interaction.user.id,
+                    alter_id,
+                )
+            )
+
+        except Exception:
+
+            traceback.print_exc()
+
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't load "
+                    "that alter profile."
+                ),
+                ephemeral=True,
+            )
+
+        if not profile:
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You don't have "
+                    "a System Profile."
+                ),
+                ephemeral=True,
+            )
+
+        if not alter:
+
+            return await interaction.response.send_message(
+                (
+                    "❌ I couldn't find an alter "
+                    "with that ID on your system.\n\n"
+                    "Use `/alter list` to check it."
+                ),
+                ephemeral=True,
+            )
+
+        embed = build_alter_embed(
+            alter
+        )
+
+        embed.title = (
+            f"⚠️ Delete {alter['name']}?"
+        )
+
+        embed.description = (
+            "This will permanently remove "
+            "this alter profile from the system.\n\n"
+            "**This cannot be undone.**"
+        )
+
+        view = DeleteAlterConfirmView(
+            bot=self.bot,
+            guild_id=(
+                interaction.guild.id
+            ),
+            user_id=(
+                interaction.user.id
+            ),
+            profile=profile,
+            alter=alter,
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
         )
 
 
@@ -2251,12 +2629,8 @@ class Alters(
 # LOAD COG
 # ==================================================
 
-async def setup(
-    bot,
-):
+async def setup(bot):
 
     await bot.add_cog(
-        Alters(
-            bot
-        )
+        Alters(bot)
     )
