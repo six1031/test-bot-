@@ -1,126 +1,230 @@
-# cogs/autothread.py
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database.autothreads import add_autothread, get_all_autothreads, remove_autothread
+from database.autothreads import (
+    add_autothread,
+    add_autothread_config,
+    get_all_autothreads,
+    get_autothread_configs,
+    remove_autothread,
+    remove_autothread_config,
+)
+
 
 class AutothreadCog(commands.Cog):
-    """Manage and restore autothreads stored in the database."""
+    """Manage per-server automatic thread channels."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # -------------------------
-    # Slash commands
-    # -------------------------
-    @app_commands.command(name="autothread-add", description="Register a channel/message as an autothread parent")
-    @app_commands.describe(parent_channel="Channel where threads will be created",
-                           parent_message_id="Optional parent message ID (leave blank to use channel-level)",
-                           thread_type="Numeric type or identifier for this autothread")
-    async def autothread_add(self, interaction: discord.Interaction, parent_channel: discord.TextChannel, parent_message_id: int | None, thread_type: int):
-        """Register an autothread in the database."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
+    # --------------------------------------------------
+    # /AUTOTHREADSETUP
+    # --------------------------------------------------
 
-        try:
-            # owner_id left None for generic autothreads; change if you want per-user ownership
-            await add_autothread(
-                thread_id=0,  # placeholder; actual thread_id will be set when thread is created
-                parent_channel_id=parent_channel.id,
-                parent_message_id=parent_message_id,
-                thread_type=thread_type,
-                owner_id=None
-            )
-            await interaction.followup.send(f"✅ Registered autothread parent in {parent_channel.mention}.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Failed to register autothread: {e}", ephemeral=True)
+    @app_commands.command(
+        name="autothreadsetup",
+        description="Set up or remove an automatic thread channel.",
+    )
+    @app_commands.describe(
+        action="Choose whether to add, remove, or list autothread channels",
+        channel="The channel to configure",
+        archive_duration="Thread auto-archive time",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add channel", value="add"),
+            app_commands.Choice(name="Remove channel", value="remove"),
+            app_commands.Choice(name="List channels", value="list"),
+        ],
+        archive_duration=[
+            app_commands.Choice(name="1 Hour", value=60),
+            app_commands.Choice(name="24 Hours", value=1440),
+            app_commands.Choice(name="3 Days", value=4320),
+            app_commands.Choice(name="7 Days", value=10080),
+        ],
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def autothreadsetup(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        channel: discord.TextChannel | None = None,
+        archive_duration: app_commands.Choice[int] | None = None,
+    ):
+        guild = interaction.guild
 
-    @app_commands.command(name="autothread-list", description="List registered autothread parents")
-    async def autothread_list(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        try:
-            rows = await get_all_autothreads()
+        # --------------------------------------------------
+        # LIST
+        # --------------------------------------------------
+
+        if action.value == "list":
+            rows = await get_autothread_configs(guild.id)
+
             if not rows:
-                await interaction.followup.send("No autothreads registered.", ephemeral=True)
-                return
+                return await interaction.response.send_message(
+                    "❌ No autothread channels are configured for this server.",
+                    ephemeral=True,
+                )
 
             lines = []
-            for r in rows:
-                parent_channel = r.get("parent_channel_id") if isinstance(r, dict) else r["parent_channel_id"]
-                parent_message = r.get("parent_message_id") if isinstance(r, dict) else r["parent_message_id"]
-                thread_type = r.get("thread_type") if isinstance(r, dict) else r["thread_type"]
-                lines.append(f"Channel ID: `{parent_channel}`; Message ID: `{parent_message}`; Type: `{thread_type}`")
 
-            # Keep the embed small and readable
-            embed = discord.Embed(title="Autothread parents", color=discord.Color.blurple())
-            embed.description = "\n".join(lines[:20])  # limit to first 20 entries
-            if len(lines) > 20:
-                embed.set_footer(text=f"And {len(lines)-20} more...")
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Failed to list autothreads: {e}", ephemeral=True)
+            for row in rows:
+                configured_channel = guild.get_channel(
+                    row["channel_id"]
+                )
 
-    @app_commands.command(name="autothread-remove", description="Remove an autothread registration by parent channel ID")
-    @app_commands.describe(parent_channel_id="Parent channel ID to remove")
-    async def autothread_remove(self, interaction: discord.Interaction, parent_channel_id: int):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        try:
-            # remove_autothread expects thread_id; we will remove by parent_channel_id here
-            # If your DB schema doesn't support this, adapt accordingly.
-            rows = await get_all_autothreads()
-            found = None
-            for r in rows:
-                if (r.get("parent_channel_id") if isinstance(r, dict) else r["parent_channel_id"]) == parent_channel_id:
-                    found = r
-                    break
+                channel_name = (
+                    configured_channel.mention
+                    if configured_channel
+                    else f"`{row['channel_id']}`"
+                )
 
-            if not found:
-                await interaction.followup.send("No autothread found for that parent channel ID.", ephemeral=True)
-                return
+                lines.append(
+                    f"• {channel_name} — "
+                    f"{row['auto_archive_duration']} minutes"
+                )
 
-            thread_id = found.get("thread_id") if isinstance(found, dict) else found["thread_id"]
-            await remove_autothread(thread_id)
-            await interaction.followup.send("✅ Removed autothread registration.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Failed to remove autothread: {e}", ephemeral=True)
+            embed = discord.Embed(
+                title="🧵 Autothread Channels",
+                description="\n".join(lines),
+                colour=discord.Colour.blurple(),
+            )
 
-    # -------------------------
-    # Event listeners
-    # -------------------------
+            return await interaction.response.send_message(
+                embed=embed,
+                ephemeral=True,
+            )
+
+        # Add/remove requires a channel
+        if channel is None:
+            return await interaction.response.send_message(
+                "❌ You need to select a channel.",
+                ephemeral=True,
+            )
+
+        # --------------------------------------------------
+        # ADD
+        # --------------------------------------------------
+
+        if action.value == "add":
+
+            duration = (
+                archive_duration.value
+                if archive_duration
+                else 1440
+            )
+
+            await add_autothread_config(
+                guild_id=guild.id,
+                channel_id=channel.id,
+                auto_archive_duration=duration,
+            )
+
+            return await interaction.response.send_message(
+                (
+                    f"✅ {channel.mention} is now an autothread channel.\n"
+                    f"Threads will auto-archive after "
+                    f"**{duration} minutes**."
+                ),
+                ephemeral=True,
+            )
+
+        # --------------------------------------------------
+        # REMOVE
+        # --------------------------------------------------
+
+        if action.value == "remove":
+
+            await remove_autothread_config(
+                guild_id=guild.id,
+                channel_id=channel.id,
+            )
+
+            return await interaction.response.send_message(
+                f"✅ Removed autothreads from {channel.mention}.",
+                ephemeral=True,
+            )
+
+    # --------------------------------------------------
+    # AUTOMATIC THREAD CREATION
+    # --------------------------------------------------
+
     @commands.Cog.listener()
-    async def on_thread_create(self, thread: discord.Thread):
-        """
-        When a thread is created, check if it belongs to a registered autothread parent.
-        If so, update the DB entry (replace placeholder thread_id=0) or add a new record.
-        """
+    async def on_message(self, message: discord.Message):
+
+        if message.author.bot:
+            return
+
+        if not message.guild:
+            return
+
+        if not isinstance(message.channel, discord.TextChannel):
+            return
+
+        configs = await get_autothread_configs(
+            message.guild.id
+        )
+
+        config = next(
+            (
+                row
+                for row in configs
+                if row["channel_id"] == message.channel.id
+            ),
+            None,
+        )
+
+        if not config:
+            return
+
         try:
-            parent = thread.parent
-            if parent is None:
-                return
+            thread_name = message.content.strip()
 
-            parent_channel_id = parent.id
-            parent_message_id = getattr(thread, "message", None)
-            # message may not be directly available; we store parent_message_id as None if not applicable
-            parent_message_id = None
+            if not thread_name:
+                thread_name = f"Thread by {message.author.display_name}"
 
-            rows = await get_all_autothreads()
-            for r in rows:
-                r_parent_channel = r.get("parent_channel_id") if isinstance(r, dict) else r["parent_channel_id"]
-                r_parent_message = r.get("parent_message_id") if isinstance(r, dict) else r["parent_message_id"]
-                if r_parent_channel == parent_channel_id and (r_parent_message is None or r_parent_message == parent_message_id):
-                    # Found a matching autothread registration. Update DB record to set thread_id.
-                    # Some implementations store thread_id immediately when created; here we remove old placeholder and add real record.
-                    try:
-                        # remove old placeholder if present
-                        if r.get("thread_id") == 0 or (not r.get("thread_id")):
-                            await remove_autothread(r.get("thread_id") if isinstance(r, dict) else r["thread_id"])
-                        await add_autothread(thread.id, parent_channel_id, parent_message_id, r.get("thread_type") if isinstance(r, dict) else r["thread_type"], owner_id=None)
-                        print(f"🔁 Registered new autothread instance: {thread.id} (parent {parent_channel_id})")
-                    except Exception as inner:
-                        print(f"⚠️ Failed to update autothread instance for thread {thread.id}: {inner}")
-                    break
+            # Keep thread names within Discord's limit
+            thread_name = thread_name[:100]
+
+            thread = await message.create_thread(
+                name=thread_name,
+                auto_archive_duration=config["auto_archive_duration"],
+            )
+
+            await add_autothread(
+                thread_id=thread.id,
+                guild_id=message.guild.id,
+                parent_channel_id=message.channel.id,
+                parent_message_id=message.id,
+                thread_type=0,
+                owner_id=message.author.id,
+            )
+
         except Exception as e:
-            print(f"⚠️ Error in on_thread_create autothread handler: {e}")
+            print(
+                f"⚠️ Failed to create autothread "
+                f"in {message.channel.id}: {e}"
+            )
+
+    # --------------------------------------------------
+    # THREAD CLEANUP
+    # --------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_thread_delete(
+        self,
+        thread: discord.Thread,
+    ):
+        try:
+            await remove_autothread(thread.id)
+
+        except Exception as e:
+            print(
+                f"⚠️ Failed to remove deleted "
+                f"autothread {thread.id}: {e}"
+            )
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AutothreadCog(bot))
