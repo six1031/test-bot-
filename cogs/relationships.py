@@ -1634,9 +1634,6 @@ class Relationships(
 
     # ==================================================
     # /TREE
-    #
-    # We are leaving the image layout alone for now.
-    # That is the NEXT file we will change.
     # ==================================================
 
     @app_commands.command(
@@ -1656,6 +1653,8 @@ class Relationships(
         user: discord.Member | None = None,
     ):
 
+        guild = interaction.guild
+
         # --------------------------------------------------
         # LOAD SETTINGS
         # --------------------------------------------------
@@ -1665,7 +1664,7 @@ class Relationships(
             settings = (
                 await self.bot.db
                 .get_guild_settings(
-                    interaction.guild.id
+                    guild.id
                 )
             )
 
@@ -1714,7 +1713,7 @@ class Relationships(
         )
 
         # --------------------------------------------------
-        # ENFORCE CHANNEL
+        # ENFORCE RELATIONSHIP CHANNEL
         # --------------------------------------------------
 
         if (
@@ -1754,6 +1753,72 @@ class Relationships(
                 or interaction.user
             )
 
+            # ==================================================
+            # PROFILE NAME HELPER
+            # ==================================================
+
+            name_cache = {}
+
+            async def get_tree_name(
+                member: discord.Member,
+            ):
+
+                if member.id in name_cache:
+
+                    return name_cache[
+                        member.id
+                    ]
+
+                profile_name = None
+
+                try:
+
+                    profile_name = (
+                        await self.bot.db
+                        .get_profile_name(
+                            guild.id,
+                            member.id,
+                        )
+                    )
+
+                except Exception:
+
+                    profile_name = None
+
+                if profile_name:
+
+                    profile_name = (
+                        str(
+                            profile_name
+                        ).strip()
+                    )
+
+                if not profile_name:
+
+                    profile_name = (
+                        member.display_name
+                    )
+
+                name_cache[
+                    member.id
+                ] = profile_name
+
+                return profile_name
+
+            # ==================================================
+            # MAIN PERSON NAME
+            # ==================================================
+
+            target_name = (
+                await get_tree_name(
+                    target
+                )
+            )
+
+            # ==================================================
+            # LOAD MAIN PERSON RELATIONSHIPS
+            # ==================================================
+
             rows = (
                 await get_relationships(
                     target.id
@@ -1772,23 +1837,68 @@ class Relationships(
                     )
                 )
 
-            spouse = None
+            # ==================================================
+            # FIND SPOUSE FIRST
+            # ==================================================
+
+            spouse_id = None
+
+            for row in rows:
+
+                relationship_type = (
+                    row[
+                        "relationship_type"
+                    ]
+                )
+
+                if (
+                    relationship_type
+                    == "spouse"
+                ):
+
+                    spouse_id = (
+                        row[
+                            "partner_id"
+                        ]
+                    )
+
+                    break
+
+            spouse_member = None
+            spouse_name = None
+
+            if spouse_id:
+
+                spouse_member = (
+                    guild.get_member(
+                        spouse_id
+                    )
+                )
+
+                if spouse_member:
+
+                    spouse_name = (
+                        await get_tree_name(
+                            spouse_member
+                        )
+                    )
+
+            # ==================================================
+            # MAIN PERSON'S RELATIONSHIPS
+            # ==================================================
 
             caregivers = []
-
             littles = []
-
             middles = []
-
             siblings = []
-
-            handler = None
-
+            handlers = []
             pets = []
 
-            # --------------------------------------------------
-            # BUILD CURRENT TREE DATA
-            # --------------------------------------------------
+            spouse_extra_roles = []
+
+            # ==================================================
+            # BUILD MAIN SIDE
+            # ==================================================
 
             for row in rows:
 
@@ -1804,9 +1914,14 @@ class Relationships(
                     ]
                 )
 
+                if (
+                    relationship_type
+                    == "spouse"
+                ):
+                    continue
+
                 partner = (
-                    interaction.guild
-                    .get_member(
+                    guild.get_member(
                         partner_id
                     )
                 )
@@ -1815,21 +1930,35 @@ class Relationships(
                     continue
 
                 if (
-                    relationship_type
-                    == "spouse"
+                    spouse_id
+                    and partner_id
+                    == spouse_id
                 ):
 
-                    spouse = (
-                        partner.display_name
-                    )
+                    if (
+                        relationship_type
+                        not in spouse_extra_roles
+                    ):
 
-                elif (
+                        spouse_extra_roles.append(
+                            relationship_type
+                        )
+
+                    continue
+
+                partner_name = (
+                    await get_tree_name(
+                        partner
+                    )
+                )
+
+                if (
                     relationship_type
                     == "caregiver"
                 ):
 
                     caregivers.append(
-                        partner.display_name
+                        partner_name
                     )
 
                 elif (
@@ -1838,7 +1967,7 @@ class Relationships(
                 ):
 
                     littles.append(
-                        partner.display_name
+                        partner_name
                     )
 
                 elif (
@@ -1847,7 +1976,7 @@ class Relationships(
                 ):
 
                     middles.append(
-                        partner.display_name
+                        partner_name
                     )
 
                 elif (
@@ -1856,7 +1985,7 @@ class Relationships(
                 ):
 
                     siblings.append(
-                        partner.display_name
+                        partner_name
                     )
 
                 elif (
@@ -1864,8 +1993,8 @@ class Relationships(
                     == "handler"
                 ):
 
-                    handler = (
-                        partner.display_name
+                    handlers.append(
+                        partner_name
                     )
 
                 elif (
@@ -1874,29 +2003,179 @@ class Relationships(
                 ):
 
                     pets.append(
-                        partner.display_name
+                        partner_name
                     )
 
-            # --------------------------------------------------
-            # GENERATE CURRENT IMAGE
-            #
-            # We change the visual layout NEXT.
-            # --------------------------------------------------
+            # ==================================================
+            # SPOUSE'S OWN RELATIONSHIPS
+            # ==================================================
+
+            spouse_data = {
+                "caregivers": [],
+                "littles": [],
+                "middles": [],
+                "siblings": [],
+                "handlers": [],
+                "pets": [],
+            }
+
+            if spouse_member:
+
+                spouse_rows = (
+                    await get_relationships(
+                        spouse_member.id
+                    )
+                )
+
+                for row in spouse_rows:
+
+                    partner_id = (
+                        row[
+                            "partner_id"
+                        ]
+                    )
+
+                    relationship_type = (
+                        row[
+                            "relationship_type"
+                        ]
+                    )
+
+                    if (
+                        relationship_type
+                        == "spouse"
+                    ):
+                        continue
+
+                    if (
+                        partner_id
+                        == target.id
+                    ):
+                        continue
+
+                    partner = (
+                        guild.get_member(
+                            partner_id
+                        )
+                    )
+
+                    if not partner:
+                        continue
+
+                    partner_name = (
+                        await get_tree_name(
+                            partner
+                        )
+                    )
+
+                    if (
+                        relationship_type
+                        == "caregiver"
+                    ):
+
+                        spouse_data[
+                            "caregivers"
+                        ].append(
+                            partner_name
+                        )
+
+                    elif (
+                        relationship_type
+                        == "little"
+                    ):
+
+                        spouse_data[
+                            "littles"
+                        ].append(
+                            partner_name
+                        )
+
+                    elif (
+                        relationship_type
+                        == "middle"
+                    ):
+
+                        spouse_data[
+                            "middles"
+                        ].append(
+                            partner_name
+                        )
+
+                    elif (
+                        relationship_type
+                        == "sibling"
+                    ):
+
+                        spouse_data[
+                            "siblings"
+                        ].append(
+                            partner_name
+                        )
+
+                    elif (
+                        relationship_type
+                        == "handler"
+                    ):
+
+                        spouse_data[
+                            "handlers"
+                        ].append(
+                            partner_name
+                        )
+
+                    elif (
+                        relationship_type
+                        == "pet"
+                    ):
+
+                        spouse_data[
+                            "pets"
+                        ].append(
+                            partner_name
+                        )
+
+            # ==================================================
+            # GENERATE TREE IMAGE
+            # ==================================================
 
             jpeg_bytes = (
                 generate_tree_image(
                     user_name=(
-                        target.display_name
+                        target_name
                     ),
-                    spouse_name=spouse,
-                    caregivers=caregivers,
-                    littles=littles,
-                    middles=middles,
-                    siblings=siblings,
-                    handler=handler,
-                    pets=pets,
+                    spouse_name=(
+                        spouse_name
+                    ),
+                    caregivers=(
+                        caregivers
+                    ),
+                    littles=(
+                        littles
+                    ),
+                    middles=(
+                        middles
+                    ),
+                    siblings=(
+                        siblings
+                    ),
+                    handler=(
+                        handlers
+                    ),
+                    pets=(
+                        pets
+                    ),
+                    spouse_data=(
+                        spouse_data
+                    ),
+                    spouse_extra_roles=(
+                        spouse_extra_roles
+                    ),
                 )
             )
+
+            # ==================================================
+            # SEND IMAGE
+            # ==================================================
 
             file = discord.File(
                 jpeg_bytes,
@@ -1943,7 +2222,6 @@ class Relationships(
 
             except Exception:
                 pass
-
 
 # ==================================================
 # LOAD COG
