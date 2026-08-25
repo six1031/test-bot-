@@ -107,6 +107,7 @@ class Database:
             """
             CREATE TABLE IF NOT EXISTS tickets (
                 channel_id BIGINT PRIMARY KEY,
+                guild_id BIGINT,
                 owner_id BIGINT NOT NULL,
                 ticket_type TEXT NOT NULL,
                 closed BOOLEAN NOT NULL DEFAULT FALSE
@@ -114,15 +115,16 @@ class Database:
             """
         )
 
-        # Add closed column to older tables
+        # Add closed column to older ticket tables
         await self.execute(
             """
             ALTER TABLE tickets
-            ADD COLUMN IF NOT EXISTS closed BOOLEAN NOT NULL DEFAULT FALSE
+            ADD COLUMN IF NOT EXISTS closed
+            BOOLEAN NOT NULL DEFAULT FALSE
             """
         )
 
-        # Add guild_id for multi-server ticket support
+        # Add guild_id to older ticket tables
         await self.execute(
             """
             ALTER TABLE tickets
@@ -132,6 +134,60 @@ class Database:
 
     # --------------------------------------------------
     # TICKET PANELS
+    # --------------------------------------------------
+
+    async def add_ticket_panel(
+        self,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        panel_type: str,
+    ):
+        await self.execute(
+            """
+            INSERT INTO ticket_panels (
+                guild_id,
+                channel_id,
+                message_id,
+                panel_type
+            )
+            VALUES ($1, $2, $3, $4)
+
+            ON CONFLICT (message_id)
+            DO NOTHING
+            """,
+            guild_id,
+            channel_id,
+            message_id,
+            panel_type,
+        )
+
+    async def get_ticket_panels(self):
+        return await self.fetch(
+            """
+            SELECT
+                guild_id,
+                channel_id,
+                message_id,
+                panel_type
+            FROM ticket_panels
+            """
+        )
+
+    async def remove_ticket_panel(
+        self,
+        message_id: int,
+    ):
+        await self.execute(
+            """
+            DELETE FROM ticket_panels
+            WHERE message_id = $1
+            """,
+            message_id,
+        )
+
+    # --------------------------------------------------
+    # TICKETS
     # --------------------------------------------------
 
     async def create_ticket(
@@ -157,65 +213,18 @@ class Database:
                 guild_id = EXCLUDED.guild_id,
                 owner_id = EXCLUDED.owner_id,
                 ticket_type = EXCLUDED.ticket_type,
-                closed = FALSEs
+                closed = FALSE
             """,
             guild_id,
             channel_id,
             owner_id,
             ticket_type,
         )
-    async def get_ticket_panels(self):
-        return await self.fetch(
-            """
-            SELECT
-                guild_id,
-                channel_id,
-                message_id,
-                panel_type
-            FROM ticket_panels
-            """
-        )
 
-    async def remove_ticket_panel(self, message_id: int):
-        await self.execute(
-            """
-            DELETE FROM ticket_panels
-            WHERE message_id = $1
-            """,
-            message_id,
-        )
-
-    # --------------------------------------------------
-    # TICKETS
-    # --------------------------------------------------
-
-    async def create_ticket(
+    async def close_ticket(
         self,
         channel_id: int,
-        owner_id: int,
-        ticket_type: str,
     ):
-        await self.execute(
-            """
-            INSERT INTO tickets (
-                channel_id,
-                owner_id,
-                ticket_type,
-                closed
-            )
-            VALUES ($1, $2, $3, FALSE)
-            ON CONFLICT (channel_id)
-            DO UPDATE SET
-                owner_id = EXCLUDED.owner_id,
-                ticket_type = EXCLUDED.ticket_type,
-                closed = FALSE
-            """,
-            channel_id,
-            owner_id,
-            ticket_type,
-        )
-
-    async def close_ticket(self, channel_id: int):
         await self.execute(
             """
             UPDATE tickets
@@ -225,7 +234,7 @@ class Database:
             channel_id,
         )
 
-        async def get_open_ticket(
+    async def get_open_ticket(
         self,
         guild_id: int,
         owner_id: int,
@@ -234,6 +243,7 @@ class Database:
         return await self.fetchrow(
             """
             SELECT
+                guild_id,
                 channel_id,
                 owner_id,
                 ticket_type,
