@@ -367,31 +367,54 @@ class RolePanelView(discord.ui.View):
 # ==================================================
 
 COMMON_ROLE_EMOJIS = [
-    ("Flower", "🌸"),
-    ("Teddy", "🧸"),
-    ("Paw", "🐾"),
-    ("Moon", "🌙"),
-    ("Star", "⭐"),
-    ("Sparkles", "✨"),
-    ("Pink Heart", "💗"),
-    ("Purple Heart", "💜"),
-    ("Blue Heart", "💙"),
-    ("Green Heart", "💚"),
-    ("Red Heart", "❤️"),
-    ("Orange Heart", "🧡"),
-    ("Yellow Heart", "💛"),
-    ("Butterfly", "🦋"),
-    ("Rose", "🌹"),
-    ("Sunflower", "🌻"),
-    ("Cherry Blossom", "🌺"),
-    ("Mushroom", "🍄"),
-    ("Strawberry", "🍓"),
-    ("Cherry", "🍒"),
-    ("Cat", "🐱"),
-    ("Fox", "🦊"),
-    ("Bunny", "🐰"),
-    ("Frog", "🐸"),
+    # Colour-role emojis
+    ("Strawberry Milk", "🥛"),
+    ("Cherry Blossom", "🌸"),
+    ("Ruby Flare", "🍎"),
+    ("Crimson Red", "🏮"),
+    ("Serenity Dreams", "💤"),
+    ("Lavender Days", "🪻"),
+    ("Lilac Mornings", "<:Purple_flower:1505720431942959334>"),
+    ("Baby Skies", "☁️"),
+    ("Angel Soft", "👼"),
+    ("Heavens Clouds", "😇"),
+    ("Blueberry Smiles", "🫐"),
+    ("Soft Mint", "🌀"),
+    ("Emerald Shine", "💎"),
+    ("Deep Grove", "🌲"),
+    ("Lemon Cream", "🍋"),
+    ("Honey Drip", "🍯"),
+    ("Autumn Scene", "🍂"),
+    ("Pumpkin", "🎃"),
+    ("Event Ping", "🥳"),
+    ("Announcement Ping", "📯"),
+    ("Revive Chat Ping", "🩹"),
+    ("Bump Reminder", "👊"),
+    ("Vent Access", "😤"),
+    ("VC Ping", "🎙️"),
+    ("Welcome Ping", "👋"),
+
+    ("Movie Night", "🎥"),
+    ("Poll Ping", "📊"),
+    ("QOTD", "⁉️"),
+    ("Story Time", "📖"),
+    ("Game Night", "🎮"),
+    ("Chill VC", "☕"),
+    ("Babysit Ping", "🍼"),
+
+    ("Minecraft", "⛏️"),
+    ("Outlast Trials", "🔦"),
+    ("Roblox", "🟩"),
+    ("Overwatch", "🎯"),
+    ("Fortnite", "🚌"),
+
+    ("Counting Club", "🔢"),
+    ("Fishing", "🎣"),
+    ("Poke Chat", "🐾"),
+    ("Cat Chat", "🐱"),
+    ("Word Chain", "💬"),
 ]
+
 
 
 class RoleEmojiPickerView(discord.ui.View):
@@ -433,11 +456,19 @@ class RoleEmojiPickerView(discord.ui.View):
                 )
 
         for index, (label, emoji) in enumerate(COMMON_ROLE_EMOJIS):
+            display_emoji = emoji
+
+            if isinstance(emoji, str) and (
+                emoji.startswith("<:")
+                or emoji.startswith("<a:")
+            ):
+                display_emoji = discord.PartialEmoji.from_str(emoji)
+
             self.emoji_items.append(
                 {
                     "label": label,
-                    "value": f"unicode:{index}",
-                    "emoji": emoji,
+                    "value": f"preset:{index}",
+                    "emoji": display_emoji,
                     "text": emoji,
                 }
             )
