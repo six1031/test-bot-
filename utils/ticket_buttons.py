@@ -29,6 +29,10 @@ class TicketTypeView(discord.ui.View):
               guild = interaction.guild
 
         settings = await interaction.client.db.get_guild_settings(guild.id)
+        print(
+            f"TICKET DEBUG: saved_category={settings.get('ticket_category') if settings else None} "
+            f"server_categories={[(c.name, c.id) for c in guild.categories]}"
+         )
 
         if not settings or not settings.get("ticket_category"):
             return await interaction.followup.send(
