@@ -83,7 +83,7 @@ class Database:
             """
         )
 
-        # Remove any old duplicate panel records
+        # Remove old duplicate panel records
         await self.execute(
             """
             DELETE FROM ticket_panels a
@@ -93,8 +93,7 @@ class Database:
             """
         )
 
-        # Older versions of the table may not have had
-        # message_id marked as unique.
+        # Make message_id unique on older versions
         await self.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS
@@ -113,14 +112,18 @@ class Database:
                 closed BOOLEAN NOT NULL DEFAULT FALSE
             )
             """
-        )      
+        )
+
+        # Add closed column to older tables
         await self.execute(
             """
             ALTER TABLE tickets
             ADD COLUMN IF NOT EXISTS closed BOOLEAN NOT NULL DEFAULT FALSE
             """
         )
-                await self.execute(
+
+        # Add guild_id for multi-server ticket support
+        await self.execute(
             """
             ALTER TABLE tickets
             ADD COLUMN IF NOT EXISTS guild_id BIGINT
