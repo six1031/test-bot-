@@ -39,8 +39,9 @@ async def close_ticket(channel_id):
     await db.close_ticket(channel_id)
 
 
-async def has_open_ticket(owner_id, ticket_type):
+async def has_open_ticket(guild_id, owner_id, ticket_type):
     ticket = await db.get_open_ticket(
+        guild_id,
         owner_id,
         ticket_type,
     )
