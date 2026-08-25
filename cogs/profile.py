@@ -6,21 +6,305 @@ from discord import app_commands
 
 
 # ==================================================
+# PROFILE ROLE NAMES
+# ==================================================
+
+GENDER_ROLES = [
+    "Male",
+    "Female",
+    "Nonbinary",
+    "Genderfluid",
+    "Genderless",
+    "Questioning",
+    "Other gender",
+]
+
+PRONOUN_ROLES = [
+    "Any pronouns",
+    "She/Her",
+    "He/Him",
+    "They/Them",
+    "It/Its",
+    "Please ask for my pronouns",
+    "Other pronouns",
+]
+
+AGE_ROLES = [
+    "18-21",
+    "22-25",
+    "26-30",
+    "31+",
+]
+
+RELATIONSHIP_STATUS_ROLES = [
+    "Single",
+    "Taken",
+    "Complicated",
+]
+
+RELATIONSHIP_STYLE_ROLES = [
+    "monogamous",
+    "Polyamorous",
+]
+
+DM_STATUS_ROLES = [
+    "DMs Open",
+    "Ask to DM",
+    "DMs Closed",
+]
+
+
+# ==================================================
 # HELPERS
 # ==================================================
 
 def clean_value(value):
+
     if value is None:
         return "Not set"
 
     value = str(value).strip()
+
     return value or "Not set"
 
 
-def private_response(interaction: discord.Interaction) -> bool:
-    # Ephemeral replies are used inside the server.
-    # DM interactions use normal replies.
+def private_response(
+    interaction: discord.Interaction,
+):
+
     return interaction.guild is not None
+
+
+def get_role_by_name(
+    guild: discord.Guild,
+    role_name: str,
+):
+
+    return discord.utils.get(
+        guild.roles,
+        name=role_name,
+    )
+
+
+def member_role_names(
+    member: discord.Member,
+):
+
+    return {
+        role.name
+        for role in member.roles
+    }
+
+
+def get_age_role(
+    age_value,
+):
+
+    try:
+        age = int(
+            str(age_value).strip()
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if 18 <= age <= 21:
+        return "18-21"
+
+    if 22 <= age <= 25:
+        return "22-25"
+
+    if 26 <= age <= 30:
+        return "26-30"
+
+    if age >= 31:
+        return "31+"
+
+    return None
+
+
+def normalise_profile_data(
+    profile: dict | None,
+    member: discord.Member | None = None,
+):
+
+    data = dict(
+        profile or {}
+    )
+
+    # --------------------------------------------------
+    # OLD GENDER VALUES
+    # --------------------------------------------------
+
+    old_gender_map = {
+        "Woman": "Female",
+        "Man": "Male",
+        "Non-binary": "Nonbinary",
+        "Agender": "Genderless",
+        "Other": "Other gender",
+    }
+
+    old_gender = data.get(
+        "gender"
+    )
+
+    if old_gender in old_gender_map:
+
+        data["gender"] = (
+            old_gender_map[
+                old_gender
+            ]
+        )
+
+    # --------------------------------------------------
+    # OLD RELATIONSHIP VALUES
+    # --------------------------------------------------
+
+    old_relationship_map = {
+        "It's complicated":
+            "Complicated",
+
+        "Married":
+            "Taken",
+    }
+
+    old_relationship = (
+        data.get(
+            "relationship_status"
+        )
+    )
+
+    if (
+        old_relationship
+        in old_relationship_map
+    ):
+
+        data[
+            "relationship_status"
+        ] = old_relationship_map[
+            old_relationship
+        ]
+
+    # --------------------------------------------------
+    # OLD DM VALUES
+    # --------------------------------------------------
+
+    old_dm_map = {
+        "🟢 DMs Open":
+            "DMs Open",
+
+        "🟡 Ask First":
+            "Ask to DM",
+
+        "🔴 DMs Closed":
+            "DMs Closed",
+    }
+
+    old_dm = data.get(
+        "dm_status"
+    )
+
+    if old_dm in old_dm_map:
+
+        data["dm_status"] = (
+            old_dm_map[
+                old_dm
+            ]
+        )
+
+    # --------------------------------------------------
+    # USE CURRENT DISCORD ROLES AS DEFAULTS
+    # --------------------------------------------------
+
+    if member:
+
+        current_roles = (
+            member_role_names(
+                member
+            )
+        )
+
+        # Gender
+
+        current_gender = [
+            role
+            for role
+            in GENDER_ROLES
+            if role in current_roles
+        ]
+
+        if current_gender:
+
+            data["gender"] = (
+                current_gender[0]
+            )
+
+        # Pronouns
+
+        current_pronouns = [
+            role
+            for role
+            in PRONOUN_ROLES
+            if role in current_roles
+        ]
+
+        if current_pronouns:
+
+            data["pronouns"] = (
+                ", ".join(
+                    current_pronouns
+                )
+            )
+
+        # Relationship status
+
+        current_status = [
+            role
+            for role
+            in RELATIONSHIP_STATUS_ROLES
+            if role in current_roles
+        ]
+
+        if current_status:
+
+            data[
+                "relationship_status"
+            ] = current_status[0]
+
+        # Relationship style
+
+        current_style = [
+            role
+            for role
+            in RELATIONSHIP_STYLE_ROLES
+            if role in current_roles
+        ]
+
+        if current_style:
+
+            data[
+                "relationship_style"
+            ] = current_style[0]
+
+        # DM status
+
+        current_dm = [
+            role
+            for role
+            in DM_STATUS_ROLES
+            if role in current_roles
+        ]
+
+        if current_dm:
+
+            data[
+                "dm_status"
+            ] = current_dm[0]
+
+    return data
 
 
 async def get_guild_and_member(
@@ -28,17 +312,26 @@ async def get_guild_and_member(
     guild_id: int,
     user_id: int,
 ):
-    guild = bot.get_guild(guild_id)
+
+    guild = bot.get_guild(
+        guild_id
+    )
 
     if guild is None:
         return None, None
 
-    member = guild.get_member(user_id)
+    member = guild.get_member(
+        user_id
+    )
 
     if member is None:
+
         try:
-            member = await guild.fetch_member(
-                user_id
+
+            member = (
+                await guild.fetch_member(
+                    user_id
+                )
             )
 
         except (
@@ -46,21 +339,359 @@ async def get_guild_and_member(
             discord.Forbidden,
             discord.HTTPException,
         ):
+
             member = None
 
     return guild, member
 
 
+# ==================================================
+# ROLE MANAGEMENT
+# ==================================================
+
+async def replace_role_group(
+    member: discord.Member,
+    all_role_names: list[str],
+    wanted_role_names: list[str],
+):
+
+    guild = member.guild
+
+    wanted_role_names = [
+        role_name
+        for role_name
+        in wanted_role_names
+        if role_name
+    ]
+
+    current_group_roles = [
+        role
+        for role in member.roles
+        if role.name
+        in all_role_names
+    ]
+
+    roles_to_remove = [
+        role
+        for role
+        in current_group_roles
+        if (
+            role.name
+            not in wanted_role_names
+            and not role.managed
+        )
+    ]
+
+    roles_to_add = []
+
+    missing_roles = []
+
+    current_names = {
+        role.name
+        for role in member.roles
+    }
+
+    for role_name in wanted_role_names:
+
+        if role_name in current_names:
+            continue
+
+        role = get_role_by_name(
+            guild,
+            role_name,
+        )
+
+        if role is None:
+
+            missing_roles.append(
+                role_name
+            )
+
+            continue
+
+        if role.managed:
+
+            missing_roles.append(
+                role_name
+            )
+
+            continue
+
+        roles_to_add.append(
+            role
+        )
+
+    if roles_to_remove:
+
+        await member.remove_roles(
+            *roles_to_remove,
+            reason=(
+                "Profile role update"
+            ),
+        )
+
+    if roles_to_add:
+
+        await member.add_roles(
+            *roles_to_add,
+            reason=(
+                "Profile role update"
+            ),
+        )
+
+    return missing_roles
+
+
+async def sync_profile_roles(
+    member: discord.Member,
+    data: dict,
+):
+
+    missing_roles = []
+
+    failed_groups = []
+
+    # --------------------------------------------------
+    # AGE
+    # --------------------------------------------------
+
+    age_role = get_age_role(
+        data.get("age")
+    )
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                AGE_ROLES,
+                (
+                    [age_role]
+                    if age_role
+                    else []
+                ),
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "Age"
+        )
+
+    # --------------------------------------------------
+    # GENDER
+    # --------------------------------------------------
+
+    gender = data.get(
+        "gender"
+    )
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                GENDER_ROLES,
+                (
+                    [gender]
+                    if gender
+                    in GENDER_ROLES
+                    else []
+                ),
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "Gender"
+        )
+
+    # --------------------------------------------------
+    # PRONOUNS
+    # --------------------------------------------------
+
+    pronoun_text = str(
+        data.get(
+            "pronouns"
+        )
+        or ""
+    )
+
+    selected_pronouns = [
+        role_name
+        for role_name
+        in PRONOUN_ROLES
+        if role_name
+        in [
+            item.strip()
+            for item
+            in pronoun_text.split(",")
+        ]
+    ]
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                PRONOUN_ROLES,
+                selected_pronouns,
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "Pronouns"
+        )
+
+    # --------------------------------------------------
+    # RELATIONSHIP STATUS
+    # --------------------------------------------------
+
+    relationship_status = (
+        data.get(
+            "relationship_status"
+        )
+    )
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                RELATIONSHIP_STATUS_ROLES,
+                (
+                    [
+                        relationship_status
+                    ]
+                    if relationship_status
+                    in RELATIONSHIP_STATUS_ROLES
+                    else []
+                ),
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "Relationship Status"
+        )
+
+    # --------------------------------------------------
+    # RELATIONSHIP STYLE
+    # --------------------------------------------------
+
+    relationship_style = (
+        data.get(
+            "relationship_style"
+        )
+    )
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                RELATIONSHIP_STYLE_ROLES,
+                (
+                    [
+                        relationship_style
+                    ]
+                    if relationship_style
+                    in RELATIONSHIP_STYLE_ROLES
+                    else []
+                ),
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "Relationship Style"
+        )
+
+    # --------------------------------------------------
+    # DM STATUS
+    # --------------------------------------------------
+
+    dm_status = data.get(
+        "dm_status"
+    )
+
+    try:
+
+        missing_roles.extend(
+            await replace_role_group(
+                member,
+                DM_STATUS_ROLES,
+                (
+                    [dm_status]
+                    if dm_status
+                    in DM_STATUS_ROLES
+                    else []
+                ),
+            )
+        )
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+    ):
+
+        failed_groups.append(
+            "DM Status"
+        )
+
+    return {
+        "missing_roles":
+            list(
+                dict.fromkeys(
+                    missing_roles
+                )
+            ),
+
+        "failed_groups":
+            failed_groups,
+    }
+
+
+# ==================================================
+# PROFILE EMBED
+# ==================================================
+
 def build_profile_embed(
     member: discord.Member,
     profile: dict,
 ):
+
     nickname = clean_value(
-        profile.get("nickname")
+        profile.get(
+            "nickname"
+        )
     )
 
     embed = discord.Embed(
-        title=f"+:ꔫ:﹤{nickname}﹥:ꔫ:+ﾟ",
+        title=(
+            f"+:ꔫ:﹤{nickname}﹥:ꔫ:+ﾟ"
+        ),
         description=(
             f"⋆ ˚｡⋆୨୧˚ **Age:** "
             f"{clean_value(profile.get('age'))}\n\n"
@@ -80,6 +711,9 @@ def build_profile_embed(
             f"⋆ ˚｡⋆୨୧˚ **Relationship Status:** "
             f"{clean_value(profile.get('relationship_status'))}\n\n"
 
+            f"⋆ ˚｡⋆୨୧˚ **Relationship Style:** "
+            f"{clean_value(profile.get('relationship_style'))}\n\n"
+
             f"⋆ ˚｡⋆୨୧˚ **Likes:** "
             f"{clean_value(profile.get('likes'))}\n\n"
 
@@ -98,12 +732,18 @@ def build_profile_embed(
     )
 
     embed.set_author(
-        name=f"Profile for {nickname}",
-        icon_url=member.display_avatar.url,
+        name=(
+            f"Profile for {nickname}"
+        ),
+        icon_url=(
+            member.display_avatar.url
+        ),
     )
 
     embed.set_thumbnail(
-        url=member.display_avatar.url
+        url=(
+            member.display_avatar.url
+        )
     )
 
     embed.set_footer(
@@ -114,7 +754,7 @@ def build_profile_embed(
 
 
 # ==================================================
-# STEP 1 - BASIC INFO
+# STEP 1 - BASIC DETAILS
 # ==================================================
 
 class BasicProfileModal(
@@ -128,6 +768,7 @@ class BasicProfileModal(
         user_id: int,
         existing: dict | None = None,
     ):
+
         super().__init__(
             title="Create Your Profile"
         )
@@ -135,69 +776,78 @@ class BasicProfileModal(
         self.bot = bot
         self.guild_id = guild_id
         self.user_id = user_id
-        self.existing = existing or {}
-
-        self.nickname = discord.ui.TextInput(
-            label="Name / nickname",
-            placeholder=(
-                "What would you like us to call you?"
-            ),
-            required=True,
-            max_length=32,
-            default=(
-                self.existing.get("nickname")
-                or ""
-            ),
+        self.existing = (
+            existing or {}
         )
 
-        self.age = discord.ui.TextInput(
-            label="Age",
-            placeholder="Your age",
-            required=True,
-            max_length=3,
-            default=(
-                self.existing.get("age")
-                or ""
-            ),
+        self.nickname = (
+            discord.ui.TextInput(
+                label=(
+                    "Name / nickname"
+                ),
+                placeholder=(
+                    "What would you like us to call you?"
+                ),
+                required=True,
+                max_length=32,
+                default=(
+                    self.existing.get(
+                        "nickname"
+                    )
+                    or ""
+                ),
+            )
         )
 
-        self.pronouns = discord.ui.TextInput(
-            label="Pronouns",
-            placeholder=(
-                "Example: she/her, he/him, they/them"
-            ),
-            required=False,
-            max_length=50,
-            default=(
-                self.existing.get("pronouns")
-                or ""
-            ),
+        self.age = (
+            discord.ui.TextInput(
+                label="Age",
+                placeholder=(
+                    "Your age"
+                ),
+                required=True,
+                max_length=3,
+                default=(
+                    self.existing.get(
+                        "age"
+                    )
+                    or ""
+                ),
+            )
         )
 
-        self.sexuality = discord.ui.TextInput(
-            label="Sexuality",
-            placeholder=(
-                "Optional - leave blank if you prefer"
-            ),
-            required=False,
-            max_length=80,
-            default=(
-                self.existing.get("sexuality")
-                or ""
-            ),
+        self.sexuality = (
+            discord.ui.TextInput(
+                label="Sexuality",
+                placeholder=(
+                    "Optional"
+                ),
+                required=False,
+                max_length=80,
+                default=(
+                    self.existing.get(
+                        "sexuality"
+                    )
+                    or ""
+                ),
+            )
         )
 
-        self.languages = discord.ui.TextInput(
-            label="Language(s)",
-            placeholder=(
-                "Example: English, Spanish"
-            ),
-            required=False,
-            max_length=100,
-            default=(
-                self.existing.get("languages")
-                or ""
-            ),
+        self.languages = (
+            discord.ui.TextInput(
+                label="Language(s)",
+                placeholder=(
+                    "Example: English, Spanish"
+                ),
+                required=False,
+                max_length=100,
+                default=(
+                    self.existing.get(
+                        "languages"
+                    )
+                    or ""
+                ),
+            )
         )
 
         self.add_item(
@@ -206,10 +856,6 @@ class BasicProfileModal(
 
         self.add_item(
             self.age
-        )
-
-        self.add_item(
-            self.pronouns
         )
 
         self.add_item(
@@ -224,6 +870,54 @@ class BasicProfileModal(
         self,
         interaction: discord.Interaction,
     ):
+
+        age_text = str(
+            self.age.value
+        ).strip()
+
+        try:
+
+            age_number = int(
+                age_text
+            )
+
+        except ValueError:
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ Please enter your "
+                        "age as a number."
+                    ),
+                    ephemeral=(
+                        private_response(
+                            interaction
+                        )
+                    ),
+                )
+            )
+
+        if (
+            age_number < 18
+            or age_number > 120
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ Please enter a "
+                        "valid age of 18 or older."
+                    ),
+                    ephemeral=(
+                        private_response(
+                            interaction
+                        )
+                    ),
+                )
+            )
+
         data = dict(
             self.existing
         )
@@ -236,14 +930,7 @@ class BasicProfileModal(
                     ).strip(),
 
                 "age":
-                    str(
-                        self.age.value
-                    ).strip(),
-
-                "pronouns":
-                    str(
-                        self.pronouns.value
-                    ).strip(),
+                    age_text,
 
                 "sexuality":
                     str(
@@ -257,29 +944,34 @@ class BasicProfileModal(
             }
         )
 
-        view = ProfileChoicesView(
-            bot=self.bot,
-            guild_id=self.guild_id,
-            user_id=self.user_id,
-            data=data,
+        view = (
+            IdentityChoicesView(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                data=data,
+            )
         )
 
-        await interaction.response.send_message(
-            view.status_text(),
-            view=view,
-            ephemeral=(
-                private_response(
-                    interaction
-                )
-            ),
+        await (
+            interaction.response
+            .send_message(
+                view.status_text(),
+                view=view,
+                ephemeral=(
+                    private_response(
+                        interaction
+                    )
+                ),
+            )
         )
 
 
 # ==================================================
-# STEP 2 - DROPDOWN CHOICES
+# STEP 2 - IDENTITY
 # ==================================================
 
-class ProfileChoicesView(
+class IdentityChoicesView(
     discord.ui.View
 ):
 
@@ -290,6 +982,7 @@ class ProfileChoicesView(
         user_id: int,
         data: dict,
     ):
+
         super().__init__(
             timeout=600
         )
@@ -308,20 +1001,21 @@ class ProfileChoicesView(
                 placeholder=(
                     "Choose your gender"
                 ),
+                row=0,
                 options=[
                     discord.SelectOption(
-                        label="Woman",
-                        value="Woman",
+                        label="Male",
+                        value="Male",
                     ),
 
                     discord.SelectOption(
-                        label="Man",
-                        value="Man",
+                        label="Female",
+                        value="Female",
                     ),
 
                     discord.SelectOption(
-                        label="Non-binary",
-                        value="Non-binary",
+                        label="Nonbinary",
+                        value="Nonbinary",
                     ),
 
                     discord.SelectOption(
@@ -330,24 +1024,73 @@ class ProfileChoicesView(
                     ),
 
                     discord.SelectOption(
-                        label="Agender",
-                        value="Agender",
+                        label="Genderless",
+                        value="Genderless",
+                    ),
+
+                    discord.SelectOption(
+                        label="Questioning",
+                        value="Questioning",
+                    ),
+
+                    discord.SelectOption(
+                        label="Other gender",
+                        value="Other gender",
+                    ),
+                ],
+            )
+        )
+
+        # --------------------------------------------------
+        # PRONOUNS
+        # --------------------------------------------------
+
+        self.pronoun_select = (
+            discord.ui.Select(
+                placeholder=(
+                    "Choose your pronouns"
+                ),
+                min_values=1,
+                max_values=3,
+                row=1,
+                options=[
+                    discord.SelectOption(
+                        label="Any pronouns",
+                        value="Any pronouns",
+                    ),
+
+                    discord.SelectOption(
+                        label="She/Her",
+                        value="She/Her",
+                    ),
+
+                    discord.SelectOption(
+                        label="He/Him",
+                        value="He/Him",
+                    ),
+
+                    discord.SelectOption(
+                        label="They/Them",
+                        value="They/Them",
+                    ),
+
+                    discord.SelectOption(
+                        label="It/Its",
+                        value="It/Its",
                     ),
 
                     discord.SelectOption(
                         label=(
-                            "Other / self describe"
-                        ),
-                        value="Other",
-                    ),
-
-                    discord.SelectOption(
-                        label=(
-                            "Prefer not to say"
+                            "Please ask for my pronouns"
                         ),
                         value=(
-                            "Prefer not to say"
+                            "Please ask for my pronouns"
                         ),
+                    ),
+
+                    discord.SelectOption(
+                        label="Other pronouns",
+                        value="Other pronouns",
                     ),
                 ],
             )
@@ -362,6 +1105,7 @@ class ProfileChoicesView(
                 placeholder=(
                     "Choose your relationship status"
                 ),
+                row=2,
                 options=[
                     discord.SelectOption(
                         label="Single",
@@ -374,59 +1118,8 @@ class ProfileChoicesView(
                     ),
 
                     discord.SelectOption(
-                        label="Married",
-                        value="Married",
-                    ),
-
-                    discord.SelectOption(
-                        label=(
-                            "It's complicated"
-                        ),
-                        value=(
-                            "It's complicated"
-                        ),
-                    ),
-
-                    discord.SelectOption(
-                        label="Not looking",
-                        value="Not looking",
-                    ),
-
-                    discord.SelectOption(
-                        label=(
-                            "Prefer not to say"
-                        ),
-                        value=(
-                            "Prefer not to say"
-                        ),
-                    ),
-                ],
-            )
-        )
-
-        # --------------------------------------------------
-        # DM STATUS
-        # --------------------------------------------------
-
-        self.dm_select = (
-            discord.ui.Select(
-                placeholder=(
-                    "Choose your DM status"
-                ),
-                options=[
-                    discord.SelectOption(
-                        label="DMs Open",
-                        value="🟢 DMs Open",
-                    ),
-
-                    discord.SelectOption(
-                        label="Ask First",
-                        value="🟡 Ask First",
-                    ),
-
-                    discord.SelectOption(
-                        label="DMs Closed",
-                        value="🔴 DMs Closed",
+                        label="Complicated",
+                        value="Complicated",
                     ),
                 ],
             )
@@ -436,12 +1129,12 @@ class ProfileChoicesView(
             self.gender_callback
         )
 
-        self.relationship_select.callback = (
-            self.relationship_callback
+        self.pronoun_select.callback = (
+            self.pronoun_callback
         )
 
-        self.dm_select.callback = (
-            self.dm_callback
+        self.relationship_select.callback = (
+            self.relationship_callback
         )
 
         self.add_item(
@@ -449,29 +1142,30 @@ class ProfileChoicesView(
         )
 
         self.add_item(
-            self.relationship_select
+            self.pronoun_select
         )
 
         self.add_item(
-            self.dm_select
+            self.relationship_select
         )
 
     def status_text(
         self,
     ):
+
         return (
-            "🌸 **Profile setup — choices**\n\n"
+            "🌸 **Profile setup — identity**\n\n"
 
             f"**Gender:** "
             f"{clean_value(self.data.get('gender'))}\n"
 
-            f"**Relationship status:** "
-            f"{clean_value(self.data.get('relationship_status'))}\n"
+            f"**Pronouns:** "
+            f"{clean_value(self.data.get('pronouns'))}\n"
 
-            f"**DM status:** "
-            f"{clean_value(self.data.get('dm_status'))}\n\n"
+            f"**Relationship Status:** "
+            f"{clean_value(self.data.get('relationship_status'))}\n\n"
 
-            "Choose one option from each menu, "
+            "Choose your options, "
             "then press **Next**."
         )
 
@@ -479,10 +1173,12 @@ class ProfileChoicesView(
         self,
         interaction: discord.Interaction,
     ):
+
         if (
             interaction.user.id
             != self.user_id
         ):
+
             await (
                 interaction.response
                 .send_message(
@@ -506,8 +1202,30 @@ class ProfileChoicesView(
         self,
         interaction: discord.Interaction,
     ):
+
         self.data["gender"] = (
-            self.gender_select.values[0]
+            self.gender_select
+            .values[0]
+        )
+
+        await (
+            interaction.response
+            .edit_message(
+                content=self.status_text(),
+                view=self,
+            )
+        )
+
+    async def pronoun_callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        self.data["pronouns"] = (
+            ", ".join(
+                self.pronoun_select
+                .values
+            )
         )
 
         await (
@@ -522,6 +1240,7 @@ class ProfileChoicesView(
         self,
         interaction: discord.Interaction,
     ):
+
         self.data[
             "relationship_status"
         ] = (
@@ -537,10 +1256,250 @@ class ProfileChoicesView(
             )
         )
 
+    @discord.ui.button(
+        label="Next",
+        style=(
+            discord.ButtonStyle.primary
+        ),
+        emoji="➡️",
+        row=3,
+    )
+    async def next_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        missing = []
+
+        if not self.data.get(
+            "gender"
+        ):
+
+            missing.append(
+                "Gender"
+            )
+
+        if not self.data.get(
+            "pronouns"
+        ):
+
+            missing.append(
+                "Pronouns"
+            )
+
+        if not self.data.get(
+            "relationship_status"
+        ):
+
+            missing.append(
+                "Relationship Status"
+            )
+
+        if missing:
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ Please choose: "
+                        + ", ".join(
+                            missing
+                        )
+                    ),
+                    ephemeral=(
+                        private_response(
+                            interaction
+                        )
+                    ),
+                )
+            )
+
+        view = (
+            SocialChoicesView(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                data=self.data,
+            )
+        )
+
+        await (
+            interaction.response
+            .edit_message(
+                content=(
+                    view.status_text()
+                ),
+                view=view,
+            )
+        )
+
+
+# ==================================================
+# STEP 3 - SOCIAL SETTINGS
+# ==================================================
+
+class SocialChoicesView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        bot,
+        guild_id: int,
+        user_id: int,
+        data: dict,
+    ):
+
+        super().__init__(
+            timeout=600
+        )
+
+        self.bot = bot
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.data = data
+
+        # --------------------------------------------------
+        # RELATIONSHIP STYLE
+        # --------------------------------------------------
+
+        self.style_select = (
+            discord.ui.Select(
+                placeholder=(
+                    "Choose relationship style"
+                ),
+                row=0,
+                options=[
+                    discord.SelectOption(
+                        label="Monogamous",
+                        value="monogamous",
+                    ),
+
+                    discord.SelectOption(
+                        label="Polyamorous",
+                        value="Polyamorous",
+                    ),
+                ],
+            )
+        )
+
+        # --------------------------------------------------
+        # DM STATUS
+        # --------------------------------------------------
+
+        self.dm_select = (
+            discord.ui.Select(
+                placeholder=(
+                    "Choose your DM status"
+                ),
+                row=1,
+                options=[
+                    discord.SelectOption(
+                        label="DMs Open",
+                        value="DMs Open",
+                    ),
+
+                    discord.SelectOption(
+                        label="Ask to DM",
+                        value="Ask to DM",
+                    ),
+
+                    discord.SelectOption(
+                        label="DMs Closed",
+                        value="DMs Closed",
+                    ),
+                ],
+            )
+        )
+
+        self.style_select.callback = (
+            self.style_callback
+        )
+
+        self.dm_select.callback = (
+            self.dm_callback
+        )
+
+        self.add_item(
+            self.style_select
+        )
+
+        self.add_item(
+            self.dm_select
+        )
+
+    def status_text(
+        self,
+    ):
+
+        return (
+            "🌸 **Profile setup — social settings**\n\n"
+
+            f"**Relationship Style:** "
+            f"{clean_value(self.data.get('relationship_style'))}\n"
+
+            f"**DM Status:** "
+            f"{clean_value(self.data.get('dm_status'))}\n\n"
+
+            "Choose both options, "
+            "then press **Next**."
+        )
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if (
+            interaction.user.id
+            != self.user_id
+        ):
+
+            await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ This profile setup "
+                        "is not for you."
+                    ),
+                    ephemeral=(
+                        private_response(
+                            interaction
+                        )
+                    ),
+                )
+            )
+
+            return False
+
+        return True
+
+    async def style_callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        self.data[
+            "relationship_style"
+        ] = (
+            self.style_select
+            .values[0]
+        )
+
+        await (
+            interaction.response
+            .edit_message(
+                content=self.status_text(),
+                view=self,
+            )
+        )
+
     async def dm_callback(
         self,
         interaction: discord.Interaction,
     ):
+
         self.data["dm_status"] = (
             self.dm_select.values[0]
         )
@@ -555,39 +1514,38 @@ class ProfileChoicesView(
 
     @discord.ui.button(
         label="Next",
-        style=discord.ButtonStyle.primary,
+        style=(
+            discord.ButtonStyle.primary
+        ),
         emoji="➡️",
-        row=3,
+        row=2,
     )
     async def next_button(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+
         missing = []
 
         if not self.data.get(
-            "gender"
+            "relationship_style"
         ):
-            missing.append(
-                "Gender"
-            )
 
-        if not self.data.get(
-            "relationship_status"
-        ):
             missing.append(
-                "Relationship status"
+                "Relationship Style"
             )
 
         if not self.data.get(
             "dm_status"
         ):
+
             missing.append(
-                "DM status"
+                "DM Status"
             )
 
         if missing:
+
             return await (
                 interaction.response
                 .send_message(
@@ -623,7 +1581,7 @@ class ProfileChoicesView(
 
 
 # ==================================================
-# STEP 3 - EXTRA DETAILS
+# STEP 4 - MORE DETAILS
 # ==================================================
 
 class MoreProfileDetailsModal(
@@ -637,6 +1595,7 @@ class MoreProfileDetailsModal(
         user_id: int,
         data: dict,
     ):
+
         super().__init__(
             title="Profile Details"
         )
@@ -645,17 +1604,6 @@ class MoreProfileDetailsModal(
         self.guild_id = guild_id
         self.user_id = user_id
         self.data = data
-
-        self.custom_gender = (
-            discord.ui.TextInput(
-                label="Custom gender",
-                placeholder=(
-                    "Only fill this if you chose Other"
-                ),
-                required=False,
-                max_length=80,
-            )
-        )
 
         self.likes = (
             discord.ui.TextInput(
@@ -718,7 +1666,7 @@ class MoreProfileDetailsModal(
             discord.ui.TextInput(
                 label="Extra",
                 placeholder=(
-                    "Anything else you want people to know?"
+                    "Anything else people should know?"
                 ),
                 required=False,
                 style=(
@@ -731,10 +1679,6 @@ class MoreProfileDetailsModal(
                     or ""
                 ),
             )
-        )
-
-        self.add_item(
-            self.custom_gender
         )
 
         self.add_item(
@@ -757,18 +1701,6 @@ class MoreProfileDetailsModal(
         self,
         interaction: discord.Interaction,
     ):
-        if (
-            self.data.get("gender")
-            == "Other"
-        ):
-            custom_gender = str(
-                self.custom_gender.value
-            ).strip()
-
-            self.data["gender"] = (
-                custom_gender
-                or "Other"
-            )
 
         self.data.update(
             {
@@ -806,12 +1738,13 @@ class MoreProfileDetailsModal(
             guild is None
             or member is None
         ):
+
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ I could not find your "
-                        "server member account."
+                        "❌ I could not find "
+                        "your server account."
                     ),
                     ephemeral=(
                         private_response(
@@ -821,16 +1754,20 @@ class MoreProfileDetailsModal(
                 )
             )
 
-        embed = build_profile_embed(
-            member,
-            self.data,
+        embed = (
+            build_profile_embed(
+                member,
+                self.data,
+            )
         )
 
-        view = ProfilePreviewView(
-            bot=self.bot,
-            guild_id=self.guild_id,
-            user_id=self.user_id,
-            data=self.data,
+        view = (
+            ProfilePreviewView(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                data=self.data,
+            )
         )
 
         await (
@@ -853,7 +1790,7 @@ class MoreProfileDetailsModal(
 
 
 # ==================================================
-# STEP 4 - PREVIEW AND SAVE
+# STEP 5 - PREVIEW / SAVE
 # ==================================================
 
 class ProfilePreviewView(
@@ -867,6 +1804,7 @@ class ProfilePreviewView(
         user_id: int,
         data: dict,
     ):
+
         super().__init__(
             timeout=600
         )
@@ -880,10 +1818,12 @@ class ProfilePreviewView(
         self,
         interaction: discord.Interaction,
     ):
+
         if (
             interaction.user.id
             != self.user_id
         ):
+
             await (
                 interaction.response
                 .send_message(
@@ -905,7 +1845,9 @@ class ProfilePreviewView(
 
     @discord.ui.button(
         label="Save Profile",
-        style=discord.ButtonStyle.success,
+        style=(
+            discord.ButtonStyle.success
+        ),
         emoji="✅",
     )
     async def save_profile(
@@ -913,6 +1855,7 @@ class ProfilePreviewView(
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+
         await (
             interaction.response
             .defer(
@@ -937,12 +1880,13 @@ class ProfilePreviewView(
             guild is None
             or member is None
         ):
+
             return await (
                 interaction.followup
                 .send(
                     (
-                        "❌ I could not find your "
-                        "server member account."
+                        "❌ I could not find "
+                        "your server account."
                     ),
                     ephemeral=(
                         private_response(
@@ -953,10 +1897,11 @@ class ProfilePreviewView(
             )
 
         # --------------------------------------------------
-        # SERVER SETTINGS
+        # SETTINGS
         # --------------------------------------------------
 
         try:
+
             settings = (
                 await self.bot.db
                 .get_guild_settings(
@@ -965,6 +1910,7 @@ class ProfilePreviewView(
             )
 
         except Exception:
+
             traceback.print_exc()
 
             return await (
@@ -987,6 +1933,7 @@ class ProfilePreviewView(
         # --------------------------------------------------
 
         try:
+
             old_profile = (
                 await self.bot.db
                 .get_member_profile(
@@ -996,6 +1943,7 @@ class ProfilePreviewView(
             )
 
         except Exception:
+
             old_profile = None
 
         old_message_id = (
@@ -1013,10 +1961,14 @@ class ProfilePreviewView(
         )
 
         # --------------------------------------------------
-        # SAVE PROFILE
+        # SAVE DATABASE PROFILE
+        #
+        # relationship_style is currently represented by
+        # the Discord role itself.
         # --------------------------------------------------
 
         try:
+
             await (
                 self.bot.db
                 .save_member_profile(
@@ -1066,6 +2018,7 @@ class ProfilePreviewView(
             )
 
         except Exception:
+
             traceback.print_exc()
 
             return await (
@@ -1084,12 +2037,41 @@ class ProfilePreviewView(
             )
 
         # --------------------------------------------------
-        # APPLY SERVER NICKNAME
+        # APPLY PROFILE ROLES
+        # --------------------------------------------------
+
+        role_result = {
+            "missing_roles": [],
+            "failed_groups": [],
+        }
+
+        try:
+
+            role_result = (
+                await sync_profile_roles(
+                    member,
+                    self.data,
+                )
+            )
+
+        except Exception:
+
+            traceback.print_exc()
+
+            role_result[
+                "failed_groups"
+            ] = [
+                "Profile roles"
+            ]
+
+        # --------------------------------------------------
+        # SERVER NICKNAME
         # --------------------------------------------------
 
         nickname_changed = True
 
         try:
+
             await member.edit(
                 nick=nickname,
                 reason=(
@@ -1101,6 +2083,7 @@ class ProfilePreviewView(
             discord.Forbidden,
             discord.HTTPException,
         ):
+
             nickname_changed = False
 
         # --------------------------------------------------
@@ -1110,6 +2093,7 @@ class ProfilePreviewView(
         intro_channel = None
 
         if settings:
+
             intro_channel_id = (
                 settings.get(
                     "intro_channel"
@@ -1117,6 +2101,7 @@ class ProfilePreviewView(
             )
 
             if intro_channel_id:
+
                 intro_channel = (
                     guild.get_channel(
                         intro_channel_id
@@ -1133,7 +2118,7 @@ class ProfilePreviewView(
         intro_updated = False
 
         # --------------------------------------------------
-        # UPDATE EXISTING PROFILE POST
+        # UPDATE EXISTING PROFILE
         # --------------------------------------------------
 
         if intro_channel:
@@ -1141,6 +2126,7 @@ class ProfilePreviewView(
             if old_message_id:
 
                 try:
+
                     old_message = (
                         await intro_channel
                         .fetch_message(
@@ -1159,19 +2145,23 @@ class ProfilePreviewView(
                     discord.Forbidden,
                     discord.HTTPException,
                 ):
+
                     intro_updated = False
 
             # --------------------------------------------------
-            # CREATE NEW PROFILE POST
+            # CREATE NEW PROFILE
             # --------------------------------------------------
 
             if not intro_updated:
 
                 try:
+
                     new_message = (
                         await intro_channel
                         .send(
-                            embed=profile_embed
+                            embed=(
+                                profile_embed
+                            )
                         )
                     )
 
@@ -1190,21 +2180,25 @@ class ProfilePreviewView(
                     discord.Forbidden,
                     discord.HTTPException,
                 ):
+
                     traceback.print_exc()
 
         # --------------------------------------------------
-        # DISABLE PREVIEW BUTTONS
+        # DISABLE BUTTONS
         # --------------------------------------------------
 
         for child in self.children:
+
             child.disabled = True
 
         try:
+
             await interaction.message.edit(
                 view=self
             )
 
         except discord.HTTPException:
+
             pass
 
         # --------------------------------------------------
@@ -1216,31 +2210,78 @@ class ProfilePreviewView(
         )
 
         if intro_updated:
+
             result += (
-                "\n🌸 Your profile has been "
-                "posted or updated in the "
-                "intros channel."
+                "\n🌸 Your member profile "
+                "has been posted/updated."
             )
 
         else:
+
             result += (
                 "\n⚠️ Your profile was saved, "
-                "but I could not post it in "
-                "the intros channel."
+                "but I couldn't update the "
+                "profile channel."
             )
 
         if nickname_changed:
+
             result += (
                 f"\n🏷️ Your server nickname "
                 f"is now **{nickname}**."
             )
 
         else:
+
             result += (
-                "\n⚠️ Your preferred name was "
-                "saved, but I could not change "
+                "\n⚠️ I couldn't change "
                 "your server nickname."
             )
+
+        if not (
+            role_result[
+                "missing_roles"
+            ]
+            or role_result[
+                "failed_groups"
+            ]
+        ):
+
+            result += (
+                "\n🎭 Your profile roles "
+                "have been updated."
+            )
+
+        else:
+
+            result += (
+                "\n⚠️ Your profile saved, "
+                "but some roles could not "
+                "be updated."
+            )
+
+            if role_result[
+                "missing_roles"
+            ]:
+
+                result += (
+                    "\nMissing roles: `"
+                    + "`, `".join(
+                        role_result[
+                            "missing_roles"
+                        ]
+                    )
+                    + "`"
+                )
+
+            if role_result[
+                "failed_groups"
+            ]:
+
+                result += (
+                    "\nCheck my **Manage Roles** "
+                    "permission and role position."
+                )
 
         await (
             interaction.followup
@@ -1258,7 +2299,9 @@ class ProfilePreviewView(
 
     @discord.ui.button(
         label="Cancel",
-        style=discord.ButtonStyle.danger,
+        style=(
+            discord.ButtonStyle.danger
+        ),
         emoji="✖️",
     )
     async def cancel_profile(
@@ -1266,7 +2309,9 @@ class ProfilePreviewView(
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+
         for child in self.children:
+
             child.disabled = True
 
         await (
@@ -1285,7 +2330,7 @@ class ProfilePreviewView(
 
 
 # ==================================================
-# DM CREATE PROFILE BUTTON
+# VERIFIED DM BUTTON
 # ==================================================
 
 class CreateProfileDMView(
@@ -1298,9 +2343,7 @@ class CreateProfileDMView(
         guild_id: int,
         user_id: int,
     ):
-        # Button remains active for 24 hours.
-        # /profile setup is always available
-        # as the backup.
+
         super().__init__(
             timeout=86400
         )
@@ -1313,24 +2356,11 @@ class CreateProfileDMView(
         self,
         interaction: discord.Interaction,
     ):
+
         if (
             interaction.user.id
             != self.user_id
         ):
-            await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ This profile setup "
-                        "button is not for you."
-                    ),
-                    ephemeral=(
-                        private_response(
-                            interaction
-                        )
-                    ),
-                )
-            )
 
             return False
 
@@ -1338,14 +2368,20 @@ class CreateProfileDMView(
 
     @discord.ui.button(
         label="Create My Profile",
-        style=discord.ButtonStyle.primary,
+        style=(
+            discord.ButtonStyle.primary
+        ),
         emoji="🌸",
+        custom_id=(
+            "create_member_profile"
+        ),
     )
     async def create_profile(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+
         guild, member = (
             await get_guild_and_member(
                 self.bot,
@@ -1358,97 +2394,21 @@ class CreateProfileDMView(
             guild is None
             or member is None
         ):
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I could not find you "
-                        "in that server.\n"
-                        "Please use `/profile setup` "
-                        "inside the server."
-                    ),
-                    ephemeral=(
-                        private_response(
-                            interaction
-                        )
-                    ),
-                )
-            )
-
-        # --------------------------------------------------
-        # CHECK SETTINGS / VERIFIED ROLE
-        # --------------------------------------------------
-
-        try:
-            settings = (
-                await self.bot.db
-                .get_guild_settings(
-                    guild.id
-                )
-            )
-
-        except Exception:
-            traceback.print_exc()
 
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ I could not load the "
-                        "server profile settings.\n"
-                        "Please use `/profile setup` "
+                        "❌ I couldn't find "
+                        "your server account. "
+                        "Use `/profile setup` "
                         "inside the server."
-                    ),
-                    ephemeral=(
-                        private_response(
-                            interaction
-                        )
-                    ),
-                )
-            )
-
-        verified_role_id = (
-            settings.get(
-                "verified_role"
-            )
-            if settings
-            else None
-        )
-
-        if verified_role_id:
-
-            verified_role = (
-                guild.get_role(
-                    verified_role_id
-                )
-            )
-
-            if (
-                verified_role
-                and verified_role
-                not in member.roles
-            ):
-                return await (
-                    interaction.response
-                    .send_message(
-                        (
-                            "❌ You no longer have "
-                            "the configured "
-                            "verified role."
-                        ),
-                        ephemeral=(
-                            private_response(
-                                interaction
-                            )
-                        ),
                     )
                 )
-
-        # --------------------------------------------------
-        # EXISTING PROFILE
-        # --------------------------------------------------
+            )
 
         try:
+
             existing = (
                 await self.bot.db
                 .get_member_profile(
@@ -1458,35 +2418,15 @@ class CreateProfileDMView(
             )
 
         except Exception:
+
             existing = None
 
-        if (
-            existing
-            and existing.get(
-                "profile_complete"
+        existing = (
+            normalise_profile_data(
+                existing,
+                member,
             )
-        ):
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "🌸 You already have "
-                        "a saved profile.\n"
-                        "Use `/profile edit` "
-                        "inside the server if "
-                        "you want to change it."
-                    ),
-                    ephemeral=(
-                        private_response(
-                            interaction
-                        )
-                    ),
-                )
-            )
-
-        # --------------------------------------------------
-        # OPEN PROFILE FORM FROM THE DM
-        # --------------------------------------------------
+        )
 
         await (
             interaction.response
@@ -1520,19 +2460,11 @@ class Profiles(
         self,
         bot,
     ):
+
         self.bot = bot
 
     # ==================================================
-    # AUTOMATIC VERIFIED ROLE DETECTION
-    #
-    # This works whether the role was:
-    #
-    # - Added manually
-    # - Added with /addrole
-    # - Added by another bot
-    #
-    # As long as the member newly receives
-    # the configured ID Verified role.
+    # VERIFIED ROLE DETECTION
     # ==================================================
 
     @commands.Cog.listener()
@@ -1541,35 +2473,32 @@ class Profiles(
         before: discord.Member,
         after: discord.Member,
     ):
+
         if after.bot:
             return
 
-        before_role_ids = {
+        before_roles = {
             role.id
             for role
             in before.roles
         }
 
-        after_role_ids = {
+        after_roles = {
             role.id
             for role
             in after.roles
         }
 
-        added_role_ids = (
-            after_role_ids
-            - before_role_ids
+        added_roles = (
+            after_roles
+            - before_roles
         )
 
-        # Nothing was added.
-        if not added_role_ids:
+        if not added_roles:
             return
 
-        # --------------------------------------------------
-        # LOAD PROFILE CONFIGURATION
-        # --------------------------------------------------
-
         try:
+
             settings = (
                 await self.bot.db
                 .get_guild_settings(
@@ -1578,7 +2507,9 @@ class Profiles(
             )
 
         except Exception:
+
             traceback.print_exc()
+
             return
 
         if not settings:
@@ -1590,23 +2521,16 @@ class Profiles(
             )
         )
 
-        if not verified_role_id:
-            return
-
-        # The role that changed wasn't the
-        # configured ID Verified role.
         if (
-            verified_role_id
-            not in added_role_ids
+            not verified_role_id
+            or verified_role_id
+            not in added_roles
         ):
-            return
 
-        # --------------------------------------------------
-        # DON'T DM SOMEONE WHO ALREADY
-        # COMPLETED THEIR PROFILE
-        # --------------------------------------------------
+            return
 
         try:
+
             existing = (
                 await self.bot.db
                 .get_member_profile(
@@ -1616,6 +2540,7 @@ class Profiles(
             )
 
         except Exception:
+
             existing = None
 
         if (
@@ -1624,16 +2549,19 @@ class Profiles(
                 "profile_complete"
             )
         ):
+
             return
 
-        # --------------------------------------------------
-        # CREATE DM BUTTON
-        # --------------------------------------------------
-
-        view = CreateProfileDMView(
-            bot=self.bot,
-            guild_id=after.guild.id,
-            user_id=after.id,
+        view = (
+            CreateProfileDMView(
+                bot=self.bot,
+                guild_id=(
+                    after.guild.id
+                ),
+                user_id=(
+                    after.id
+                ),
+            )
         )
 
         embed = discord.Embed(
@@ -1641,26 +2569,21 @@ class Profiles(
                 "🌸 You're verified!"
             ),
             description=(
-                f"You've received the verified role "
-                f"in **{after.guild.name}**.\n\n"
+                f"You've been verified in "
+                f"**{after.guild.name}**!\n\n"
 
-                "Press **Create My Profile** below "
-                "to set up your member profile.\n\n"
+                "Press **Create My Profile** "
+                "below to create your member "
+                "profile and choose your roles.\n\n"
 
-                "Your chosen name will be saved and "
-                "used by the bot for things like "
-                "your relationship tree.\n\n"
-
-                "If the button doesn't work, "
-                "use `/profile setup` in the server."
+                "If you can't use the button, "
+                "use `/profile setup` "
+                "inside the server."
             ),
         )
 
-        # --------------------------------------------------
-        # SEND DM
-        # --------------------------------------------------
-
         try:
+
             await after.send(
                 embed=embed,
                 view=view,
@@ -1670,11 +2593,7 @@ class Profiles(
             discord.Forbidden,
             discord.HTTPException,
         ):
-            # Their DMs are probably closed.
-            #
-            # That's okay:
-            # /profile setup still works
-            # inside the server.
+
             pass
 
     # ==================================================
@@ -1701,52 +2620,38 @@ class Profiles(
         verified_role: discord.Role,
         intro_channel: discord.TextChannel,
     ):
+
         if not (
             interaction.user
             .guild_permissions
             .manage_guild
         ):
+
             return await (
                 interaction.response
                 .send_message(
                     (
                         "❌ You need "
-                        "**Manage Server** "
-                        "to use this command."
+                        "**Manage Server**."
                     ),
                     ephemeral=True,
                 )
             )
 
-        try:
-            await (
-                self.bot.db
-                .upsert_guild_settings(
-                    guild_id=(
-                        interaction.guild.id
-                    ),
-                    verified_role_id=(
-                        verified_role.id
-                    ),
-                    intro_channel_id=(
-                        intro_channel.id
-                    ),
-                )
+        await (
+            self.bot.db
+            .upsert_guild_settings(
+                guild_id=(
+                    interaction.guild.id
+                ),
+                verified_role_id=(
+                    verified_role.id
+                ),
+                intro_channel_id=(
+                    intro_channel.id
+                ),
             )
-
-        except Exception:
-            traceback.print_exc()
-
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I could not save "
-                        "the profile configuration."
-                    ),
-                    ephemeral=True,
-                )
-            )
+        )
 
         await (
             interaction.response
@@ -1754,10 +2659,10 @@ class Profiles(
                 (
                     "✅ **Profile system configured!**\n\n"
 
-                    f"**Verified role:** "
+                    f"**Verified Role:** "
                     f"{verified_role.mention}\n"
 
-                    f"**Intros channel:** "
+                    f"**Profile Channel:** "
                     f"{intro_channel.mention}"
                 ),
                 ephemeral=True,
@@ -1778,44 +2683,18 @@ class Profiles(
         self,
         interaction: discord.Interaction,
     ):
+
         guild = interaction.guild
 
         if guild is None:
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ Use this command "
-                        "inside the server."
-                    )
-                )
+            return
+
+        settings = (
+            await self.bot.db
+            .get_guild_settings(
+                guild.id
             )
-
-        # --------------------------------------------------
-        # LOAD SETTINGS
-        # --------------------------------------------------
-
-        try:
-            settings = (
-                await self.bot.db
-                .get_guild_settings(
-                    guild.id
-                )
-            )
-
-        except Exception:
-            traceback.print_exc()
-
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I could not load "
-                        "the profile settings."
-                    ),
-                    ephemeral=True,
-                )
-            )
+        )
 
         if (
             not settings
@@ -1823,22 +2702,17 @@ class Profiles(
                 "intro_channel"
             )
         ):
+
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "⚠️ The profile system "
-                        "has not been configured yet.\n"
-                        "An admin needs to run "
-                        "`/profile configure` first."
+                        "⚠️ An admin needs "
+                        "to run `/profile configure` first."
                     ),
                     ephemeral=True,
                 )
             )
-
-        # --------------------------------------------------
-        # CHECK VERIFIED ROLE
-        # --------------------------------------------------
 
         verified_role_id = (
             settings.get(
@@ -1859,23 +2733,20 @@ class Profiles(
                 and verified_role
                 not in interaction.user.roles
             ):
+
                 return await (
                     interaction.response
                     .send_message(
                         (
-                            "❌ You need the configured "
-                            "verified role before "
-                            "creating a profile."
+                            "❌ You need the "
+                            "verified role first."
                         ),
                         ephemeral=True,
                     )
                 )
 
-        # --------------------------------------------------
-        # EXISTING PROFILE
-        # --------------------------------------------------
-
         try:
+
             existing = (
                 await self.bot.db
                 .get_member_profile(
@@ -1885,11 +2756,15 @@ class Profiles(
             )
 
         except Exception:
+
             existing = None
 
-        # --------------------------------------------------
-        # OPEN FORM
-        # --------------------------------------------------
+        existing = (
+            normalise_profile_data(
+                existing,
+                interaction.user,
+            )
+        )
 
         await (
             interaction.response
@@ -1919,20 +2794,11 @@ class Profiles(
         self,
         interaction: discord.Interaction,
     ):
+
         guild = interaction.guild
 
-        if guild is None:
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ Use this command "
-                        "inside the server."
-                    )
-                )
-            )
-
         try:
+
             existing = (
                 await self.bot.db
                 .get_member_profile(
@@ -1942,31 +2808,31 @@ class Profiles(
             )
 
         except Exception:
+
             traceback.print_exc()
 
+            existing = None
+
+        if not existing:
+
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ I could not load "
-                        "your saved profile."
+                        "❌ You don't have "
+                        "a profile yet. "
+                        "Use `/profile setup`."
                     ),
                     ephemeral=True,
                 )
             )
 
-        if not existing:
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ You do not have "
-                        "a saved profile yet.\n"
-                        "Use `/profile setup` first."
-                    ),
-                    ephemeral=True,
-                )
+        existing = (
+            normalise_profile_data(
+                existing,
+                interaction.user,
             )
+        )
 
         await (
             interaction.response
@@ -2002,18 +2868,6 @@ class Profiles(
         interaction: discord.Interaction,
         user: discord.Member | None = None,
     ):
-        guild = interaction.guild
-
-        if guild is None:
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ Use this command "
-                        "inside the server."
-                    )
-                )
-            )
 
         target = (
             user
@@ -2021,39 +2875,40 @@ class Profiles(
         )
 
         try:
+
             profile = (
                 await self.bot.db
                 .get_member_profile(
-                    guild.id,
+                    interaction.guild.id,
                     target.id,
                 )
             )
 
         except Exception:
+
             traceback.print_exc()
 
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ I could not load "
-                        "that profile."
-                    ),
-                    ephemeral=True,
-                )
-            )
+            profile = None
 
         if not profile:
+
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ That member has not "
+                        "❌ That member hasn't "
                         "created a profile yet."
                     ),
                     ephemeral=True,
                 )
             )
+
+        profile = (
+            normalise_profile_data(
+                profile,
+                target,
+            )
+        )
 
         await (
             interaction.response
@@ -2076,6 +2931,7 @@ class Profiles(
 async def setup(
     bot,
 ):
+
     await bot.add_cog(
         Profiles(
             bot
