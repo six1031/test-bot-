@@ -363,60 +363,369 @@ class RolePanelView(discord.ui.View):
 
 
 # ==================================================
-# SETUP - EMOJI MODAL
+# ROLE EMOJI PICKER
 # ==================================================
 
-class SetupRoleEmojiModal(discord.ui.Modal):
+COMMON_ROLE_EMOJIS = [
+    ("Flower", "🌸"),
+    ("Teddy", "🧸"),
+    ("Paw", "🐾"),
+    ("Moon", "🌙"),
+    ("Star", "⭐"),
+    ("Sparkles", "✨"),
+    ("Pink Heart", "💗"),
+    ("Purple Heart", "💜"),
+    ("Blue Heart", "💙"),
+    ("Green Heart", "💚"),
+    ("Red Heart", "❤️"),
+    ("Orange Heart", "🧡"),
+    ("Yellow Heart", "💛"),
+    ("Butterfly", "🦋"),
+    ("Rose", "🌹"),
+    ("Sunflower", "🌻"),
+    ("Cherry Blossom", "🌺"),
+    ("Mushroom", "🍄"),
+    ("Strawberry", "🍓"),
+    ("Cherry", "🍒"),
+    ("Cat", "🐱"),
+    ("Fox", "🦊"),
+    ("Bunny", "🐰"),
+    ("Frog", "🐸"),
+]
+
+
+class RoleEmojiPickerView(discord.ui.View):
+    PAGE_SIZE = 24
+
     def __init__(
         self,
-        setup_view,
+        bot,
+        guild_id: int,
+        creator_id: int,
         role: discord.Role,
+        parent_view,
+        mode: str,
     ):
-        super().__init__(
-            title=f"Emoji for {role.name}"[:45]
-        )
+        super().__init__(timeout=600)
 
-        self.setup_view = setup_view
+        self.bot = bot
+        self.guild_id = guild_id
+        self.creator_id = creator_id
         self.role = role
+        self.parent_view = parent_view
+        self.mode = mode
+        self.page = 0
+        self.emoji_items = []
 
-        self.emoji_input = discord.ui.TextInput(
-            label="Emoji",
-            placeholder="Example: 🌸 or <:name:123456>",
-            required=False,
-            max_length=100,
+        guild = self.bot.get_guild(guild_id)
+
+        # Put server custom emojis first because they are the
+        # awkward ones to copy manually on desktop.
+        if guild:
+            for emoji in guild.emojis:
+                self.emoji_items.append(
+                    {
+                        "label": emoji.name[:100],
+                        "value": f"custom:{emoji.id}",
+                        "emoji": emoji,
+                        "text": str(emoji),
+                    }
+                )
+
+        for index, (label, emoji) in enumerate(COMMON_ROLE_EMOJIS):
+            self.emoji_items.append(
+                {
+                    "label": label,
+                    "value": f"unicode:{index}",
+                    "emoji": emoji,
+                    "text": emoji,
+                }
+            )
+
+        self.build_select()
+
+    def total_pages(self):
+        if not self.emoji_items:
+            return 1
+
+        return (
+            (len(self.emoji_items) - 1)
+            // self.PAGE_SIZE
+        ) + 1
+
+    def build_select(self):
+        for item in list(self.children):
+            if isinstance(item, discord.ui.Select):
+                self.remove_item(item)
+
+        start = self.page * self.PAGE_SIZE
+        end = start + self.PAGE_SIZE
+        page_items = self.emoji_items[start:end]
+
+        options = [
+            discord.SelectOption(
+                label="No Emoji",
+                value="none",
+                emoji="🚫",
+                description="Use a text-only role button",
+            )
+        ]
+
+        for item in page_items:
+            try:
+                options.append(
+                    discord.SelectOption(
+                        label=item["label"][:100],
+                        value=item["value"],
+                        emoji=item["emoji"],
+                    )
+                )
+            except Exception:
+                continue
+
+        select = discord.ui.Select(
+            placeholder=f"Choose emoji for {self.role.name}"[:150],
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
         )
 
-        self.add_item(self.emoji_input)
+        select.callback = self.emoji_selected
+        self.add_item(select)
+        self.update_buttons()
 
-    async def on_submit(
+    def update_buttons(self):
+        total = self.total_pages()
+
+        self.page_number.label = f"{self.page + 1}/{total}"
+        self.previous_page.disabled = total <= 1
+        self.next_page.disabled = total <= 1
+
+    async def interaction_check(
         self,
         interaction: discord.Interaction,
     ):
-        emoji = str(self.emoji_input.value).strip()
+        if interaction.user.id != self.creator_id:
+            await interaction.response.send_message(
+                "❌ This emoji picker isn't for you.",
+                ephemeral=True,
+            )
+            return False
 
-        already_exists = self.role.id in self.setup_view.items
+        return True
 
-        self.setup_view.items[self.role.id] = {
-            "role_id": self.role.id,
-            "role_name": self.role.name,
-            "emoji": emoji,
-        }
+    def selected_text(self, selected: str):
+        if selected == "none":
+            return None
 
-        if not already_exists:
-            self.setup_view.order.append(self.role.id)
+        for item in self.emoji_items:
+            if item["value"] == selected:
+                return item["text"]
 
-        try:
-            if self.setup_view.message:
-                await self.setup_view.message.edit(
-                    content=self.setup_view.summary_text(),
-                    view=self.setup_view,
+        return None
+
+    async def emoji_selected(
+        self,
+        interaction: discord.Interaction,
+    ):
+        select = next(
+            (
+                child
+                for child in self.children
+                if isinstance(child, discord.ui.Select)
+            ),
+            None,
+        )
+
+        if select is None:
+            return
+
+        emoji = self.selected_text(select.values[0])
+
+        # ----------------------------------------------
+        # SETUP MODE
+        # ----------------------------------------------
+
+        if self.mode == "setup":
+            already_exists = (
+                self.role.id in self.parent_view.items
+            )
+
+            self.parent_view.items[self.role.id] = {
+                "role_id": self.role.id,
+                "role_name": self.role.name,
+                "emoji": emoji or "",
+            }
+
+            if not already_exists:
+                self.parent_view.order.append(self.role.id)
+
+            try:
+                if self.parent_view.message:
+                    await self.parent_view.message.edit(
+                        content=self.parent_view.summary_text(),
+                        view=self.parent_view,
+                    )
+            except discord.HTTPException:
+                pass
+
+            self.stop()
+
+            shown = emoji or "No emoji"
+
+            return await interaction.response.edit_message(
+                content=(
+                    f"✅ Added **{self.role.name}** to the draft panel.\n"
+                    f"Emoji: {shown}"
+                ),
+                view=None,
+            )
+
+        # ----------------------------------------------
+        # EDIT MODE
+        # ----------------------------------------------
+
+        if self.mode == "edit":
+            existing = self.parent_view.items_by_role.get(
+                self.role.id
+            )
+
+            if existing:
+                position = existing.get("position", 0)
+            else:
+                if len(self.parent_view.items) >= MAX_PANEL_ROLES:
+                    return await interaction.response.edit_message(
+                        content="❌ This panel already has 25 roles.",
+                        view=None,
+                    )
+
+                position = 0
+
+                if self.parent_view.items:
+                    position = max(
+                        item.get("position", 0)
+                        for item in self.parent_view.items
+                    ) + 1
+
+            try:
+                await add_role_panel_item(
+                    panel_id=self.parent_view.panel_id,
+                    role_id=self.role.id,
+                    emoji=emoji or None,
+                    position=position,
                 )
-        except discord.HTTPException:
-            pass
 
-        await interaction.response.send_message(
-            f"✅ Added **{self.role.name}** to the draft panel.",
-            ephemeral=True,
+                await self.parent_view.reload_items()
+
+                ok, error = await refresh_published_panel(
+                    self.parent_view.bot,
+                    self.parent_view.panel_id,
+                )
+
+                if self.parent_view.message:
+                    await self.parent_view.message.edit(
+                        content=self.parent_view.summary_text(),
+                        view=self.parent_view,
+                    )
+
+            except Exception:
+                traceback.print_exc()
+
+                return await interaction.response.edit_message(
+                    content="❌ I couldn't add/update that role.",
+                    view=None,
+                )
+
+            text = f"✅ **{self.role.name}** added/updated."
+
+            if not ok:
+                text += (
+                    "\n⚠️ Database saved, but the panel message "
+                    f"could not refresh: {error}"
+                )
+
+            self.stop()
+
+            return await interaction.response.edit_message(
+                content=text,
+                view=None,
+            )
+
+        self.stop()
+
+        await interaction.response.edit_message(
+            content="❌ Unknown emoji picker mode.",
+            view=None,
+        )
+
+    @discord.ui.button(
+        label="Previous",
+        emoji="◀️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        total = self.total_pages()
+        self.page -= 1
+
+        if self.page < 0:
+            self.page = total - 1
+
+        self.build_select()
+
+        await interaction.response.edit_message(
+            content=(
+                f"🎭 **Choose an emoji for {self.role.name}**\n\n"
+                "Server custom emojis are shown first. "
+                "Use Previous / Next for more."
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="1/1",
+        style=discord.ButtonStyle.primary,
+        disabled=True,
+        row=1,
+    )
+    async def page_number(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        pass
+
+    @discord.ui.button(
+        label="Next",
+        emoji="▶️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        total = self.total_pages()
+        self.page += 1
+
+        if self.page >= total:
+            self.page = 0
+
+        self.build_select()
+
+        await interaction.response.edit_message(
+            content=(
+                f"🎭 **Choose an emoji for {self.role.name}**\n\n"
+                "Server custom emojis are shown first. "
+                "Use Previous / Next for more."
+            ),
+            view=self,
         )
 
 
@@ -510,7 +819,7 @@ class RolePanelSetupView(discord.ui.View):
         lines.extend(
             [
                 "",
-                "Select a role above. I'll then ask which emoji you want on its button.",
+                "Select a role above. I'll open an emoji picker for its button.",
                 "",
                 f"**{len(self.order)}/{MAX_PANEL_ROLES} roles**",
             ]
@@ -564,11 +873,23 @@ class RolePanelSetupView(discord.ui.View):
                 ephemeral=True,
             )
 
-        await interaction.response.send_modal(
-            SetupRoleEmojiModal(
-                self,
-                role,
-            )
+        picker = RoleEmojiPickerView(
+            bot=self.bot,
+            guild_id=self.guild_id,
+            creator_id=self.creator_id,
+            role=role,
+            parent_view=self,
+            mode="setup",
+        )
+
+        await interaction.response.send_message(
+            (
+                f"🎭 **Choose an emoji for {role.name}**\n\n"
+                "Server custom emojis are shown first. "
+                "Use Previous / Next for more."
+            ),
+            view=picker,
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -885,105 +1206,6 @@ class EditPanelTextModal(discord.ui.Modal):
 
 
 # ==================================================
-# EDIT - EMOJI MODAL
-# ==================================================
-
-class EditRoleEmojiModal(discord.ui.Modal):
-    def __init__(
-        self,
-        edit_view,
-        role: discord.Role,
-    ):
-        super().__init__(
-            title=f"Role: {role.name}"[:45]
-        )
-
-        self.edit_view = edit_view
-        self.role = role
-
-        old_emoji = ""
-
-        old_item = edit_view.items_by_role.get(role.id)
-
-        if old_item:
-            old_emoji = old_item.get("emoji") or ""
-
-        self.emoji_input = discord.ui.TextInput(
-            label="Button emoji",
-            placeholder="Example: 🌸 or <:name:123456>",
-            required=False,
-            max_length=100,
-            default=old_emoji,
-        )
-
-        self.add_item(self.emoji_input)
-
-    async def on_submit(
-        self,
-        interaction: discord.Interaction,
-    ):
-        emoji = str(self.emoji_input.value).strip()
-
-        existing = self.edit_view.items_by_role.get(self.role.id)
-
-        if existing:
-            position = existing.get("position", 0)
-        else:
-            if len(self.edit_view.items) >= MAX_PANEL_ROLES:
-                return await interaction.response.send_message(
-                    "❌ This panel already has 25 roles.",
-                    ephemeral=True,
-                )
-
-            position = 0
-
-            if self.edit_view.items:
-                position = max(
-                    item.get("position", 0)
-                    for item in self.edit_view.items
-                ) + 1
-
-        try:
-            await add_role_panel_item(
-                panel_id=self.edit_view.panel_id,
-                role_id=self.role.id,
-                emoji=emoji or None,
-                position=position,
-            )
-
-            await self.edit_view.reload_items()
-
-            ok, error = await refresh_published_panel(
-                self.edit_view.bot,
-                self.edit_view.panel_id,
-            )
-
-            if self.edit_view.message:
-                await self.edit_view.message.edit(
-                    content=self.edit_view.summary_text(),
-                    view=self.edit_view,
-                )
-
-        except Exception:
-            traceback.print_exc()
-
-            return await interaction.response.send_message(
-                "❌ I couldn't add/update that role.",
-                ephemeral=True,
-            )
-
-        text = f"✅ **{self.role.name}** added/updated."
-
-        if not ok:
-            text += f"\n⚠️ Database saved, but the panel message could not refresh: {error}"
-
-        await interaction.response.send_message(
-            text,
-            ephemeral=True,
-        )
-
-
-# ==================================================
 # EDIT VIEW
 # ==================================================
 
@@ -1175,11 +1397,36 @@ class RolePanelEditView(discord.ui.View):
                 ephemeral=True,
             )
 
-        await interaction.response.send_modal(
-            EditRoleEmojiModal(
-                self,
-                role,
-            )
+        picker = RoleEmojiPickerView(
+            bot=self.bot,
+            guild_id=interaction.guild.id,
+            creator_id=self.creator_id,
+            role=role,
+            parent_view=self,
+            mode="edit",
+        )
+
+        current_item = self.items_by_role.get(role.id)
+        current_emoji = (
+            current_item.get("emoji")
+            if current_item
+            else None
+        )
+
+        if current_emoji:
+            current_text = f"\nCurrent emoji: {current_emoji}\n"
+        else:
+            current_text = "\n"
+
+        await interaction.response.send_message(
+            (
+                f"🎭 **Choose an emoji for {role.name}**"
+                f"{current_text}\n"
+                "Server custom emojis are shown first. "
+                "Use Previous / Next for more."
+            ),
+            view=picker,
+            ephemeral=True,
         )
 
     @discord.ui.button(
