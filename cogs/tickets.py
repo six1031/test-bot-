@@ -7,56 +7,18 @@ from database.tickets import (
     get_panels,
 )
 
-from views.ticket_registry import PANEL_VIEWS
 from views.ticket_views import (
     VerificationTicketView,
     ReportsTicketView,
     ApplicationsTicketView,
     ContactTicketView,
+    CloseTicketView,
 )
 
 
-# --------------------------------------------------
-# CLOSE BUTTON
-# --------------------------------------------------
-
-class CloseTicketButton(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="🔒 Close Ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="close_ticket_button"
-    )
-    async def close_ticket(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        settings = await interaction.client.db.get_guild_settings(
-            interaction.guild.id
-        )
-
-        if not settings or not settings.get("staff_role"):
-            return await interaction.response.send_message(
-                "❌ Staff role is not set up yet. Run `/setup` first.",
-                ephemeral=True
-            )
-
-        staff_role = interaction.guild.get_role(
-            settings["staff_role"]
-        )
-
-        if not staff_role or staff_role not in interaction.user.roles:
-            return await interaction.response.send_message(
-                "❌ Only staff can close tickets.",
-                ephemeral=True
-            )
-
-        await interaction.channel.delete()
-
+# ==================================================
+# PANEL VIEWS
+# ==================================================
 
 PANEL_VIEWS = {
     "verification": VerificationTicketView,
@@ -65,61 +27,162 @@ PANEL_VIEWS = {
     "contact": ContactTicketView,
 }
 
+
 PANEL_CHOICES = [
-    app_commands.Choice(name="Verification", value="verification"),
-    app_commands.Choice(name="Reports", value="reports"),
-    app_commands.Choice(name="Applications", value="applications"),
-    app_commands.Choice(name="Contact Staff", value="contact"),
+    app_commands.Choice(
+        name="Verification",
+        value="verification",
+    ),
+    app_commands.Choice(
+        name="Reports",
+        value="reports",
+    ),
+    app_commands.Choice(
+        name="Applications",
+        value="applications",
+    ),
+    app_commands.Choice(
+        name="Contact Staff",
+        value="contact",
+    ),
 ]
 
 
-# --------------------------------------------------
+# ==================================================
 # MAIN COG
-# --------------------------------------------------
+# ==================================================
 
 class Tickets(commands.Cog):
+
     def __init__(self, bot):
         self.bot = bot
 
+    # ==================================================
+    # RESTORE PERSISTENT BUTTONS
+    # ==================================================
+
     async def cog_load(self):
-        panels = await get_panels()
 
-        for panel in panels:
-            guild = self.bot.get_guild(panel["guild_id"])
+        print(
+            "🔄 Registering persistent ticket buttons..."
+        )
 
-            if guild is None:
-                continue
+        # --------------------------------------------------
+        # PANEL BUTTONS
+        #
+        # These views have:
+        #
+        # timeout=None
+        # fixed custom_id values
+        #
+        # Registering them here makes old panel buttons
+        # work again after Railway redeploys.
+        # --------------------------------------------------
 
-            channel = guild.get_channel(panel["channel_id"])
+        try:
 
-            if channel is None:
-                continue
+            self.bot.add_view(
+                VerificationTicketView()
+            )
 
-            try:
-                message = await channel.fetch_message(panel["message_id"])
-            except discord.NotFound:
-                continue
+            self.bot.add_view(
+                ReportsTicketView()
+            )
 
-            panel_type = panel["panel_type"]
+            self.bot.add_view(
+                ApplicationsTicketView()
+            )
 
-            if panel_type not in PANEL_VIEWS:
-                continue
+            self.bot.add_view(
+                ContactTicketView()
+            )
 
-            try:
-                await message.edit(
-                    view=PANEL_VIEWS[panel_type]()
+            print(
+                "✅ Persistent ticket panel buttons registered."
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Could not register ticket panel views: {e}"
+            )
+
+        # --------------------------------------------------
+        # CLOSE TICKET BUTTON
+        #
+        # This is the SAME CloseTicketView used inside
+        # views/ticket_views.py when a ticket is created.
+        # --------------------------------------------------
+
+        try:
+
+            self.bot.add_view(
+                CloseTicketView()
+            )
+
+            print(
+                "✅ Persistent close-ticket button registered."
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Could not register close-ticket view: {e}"
+            )
+
+        # --------------------------------------------------
+        # CHECK SAVED PANELS
+        #
+        # The persistent views above are enough to restore
+        # functionality.
+        #
+        # We still check PostgreSQL here so Railway logs
+        # tell us how many ticket panels are saved.
+        # --------------------------------------------------
+
+        try:
+
+            panels = await get_panels()
+
+            print(
+                f"🎫 Found {len(panels)} saved ticket panel(s)."
+            )
+
+            for panel in panels:
+
+                panel_type = panel["panel_type"]
+                message_id = panel["message_id"]
+
+                print(
+                    (
+                        f"✅ Saved panel: "
+                        f"{panel_type} "
+                        f"(message {message_id})"
+                    )
                 )
-            except Exception as e:
-                print(f"Failed to restore panel {panel['message_id']}: {e}")
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Could not read saved ticket panels: {e}"
+            )
+
+    # ==================================================
+    # /TICKETPANEL
+    # ==================================================
 
     @app_commands.command(
         name="ticketpanel",
-        description="Create a ticket panel."
+        description="Create a ticket panel.",
     )
     @app_commands.describe(
-        panel_type="Which panel would you like to create?"
+        panel_type=(
+            "Which panel would you like to create?"
+        )
     )
-    @app_commands.choices(panel_type=PANEL_CHOICES)
+    @app_commands.choices(
+        panel_type=PANEL_CHOICES
+    )
     async def ticketpanel(
         self,
         interaction: discord.Interaction,
@@ -128,32 +191,111 @@ class Tickets(commands.Cog):
 
         panel = panel_type.value
 
+        view_class = PANEL_VIEWS.get(
+            panel
+        )
+
+        if view_class is None:
+
+            return await (
+                interaction.response
+                .send_message(
+                    "❌ Invalid ticket panel type.",
+                    ephemeral=True,
+                )
+            )
+
+        # --------------------------------------------------
+        # CREATE PANEL
+        # --------------------------------------------------
+
         embed = discord.Embed(
             title=f"🎫 {panel.title()} Tickets",
-            description="Click the button below to open a ticket.",
+            description=(
+                "Click the button below "
+                "to open a ticket."
+            ),
             colour=discord.Colour.blurple(),
         )
 
-        view = PANEL_VIEWS[panel]()
+        view = view_class()
 
-        await interaction.response.defer(ephemeral=True)
-
-        msg = await interaction.channel.send(
-            embed=embed,
-            view=view,
+        await interaction.response.defer(
+            ephemeral=True
         )
 
-        await interaction.followup.send(
-            "✅ Ticket panel created.",
-            ephemeral=True,
-        )
-        await add_panel(
-            interaction.guild.id,
-            interaction.channel.id,
-            msg.id,
-            panel,
+        # --------------------------------------------------
+        # SEND PANEL
+        # --------------------------------------------------
+
+        try:
+
+            message = await (
+                interaction.channel.send(
+                    embed=embed,
+                    view=view,
+                )
+            )
+
+        except discord.HTTPException:
+
+            return await (
+                interaction.followup
+                .send(
+                    "❌ I could not create the ticket panel.",
+                    ephemeral=True,
+                )
+            )
+
+        # --------------------------------------------------
+        # SAVE PANEL
+        # --------------------------------------------------
+
+        try:
+
+            await add_panel(
+                interaction.guild.id,
+                interaction.channel.id,
+                message.id,
+                panel,
+            )
+
+        except Exception as e:
+
+            print(
+                (
+                    f"❌ Failed to save ticket panel "
+                    f"{message.id}: {e}"
+                )
+            )
+
+            return await (
+                interaction.followup
+                .send(
+                    (
+                        "⚠️ The panel was created, "
+                        "but I could not save it "
+                        "to PostgreSQL."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        await (
+            interaction.followup
+            .send(
+                "✅ Ticket panel created and saved.",
+                ephemeral=True,
+            )
         )
 
+
+# ==================================================
+# LOAD COG
+# ==================================================
 
 async def setup(bot):
-    await bot.add_cog(Tickets(bot))
+
+    await bot.add_cog(
+        Tickets(bot)
+    )
