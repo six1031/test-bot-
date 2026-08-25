@@ -1369,32 +1369,119 @@ def generate_tree_image(
     if has_spouse:
 
         section_font = auto_font(
-            SMALL_FONT_SIZE,
+            SMALL_FONT_SIZE + 6,
             bold=True,
         )
 
-        draw.text(
-            (
-                user_x,
-                center_y + 150,
-            ),
+        # Different colours from the gold relationship tags
+        section_text_color = (
+            255,
+            255,
+            255,
+        )
+
+        section_fill = (
+            120,
+            85,
+            150,
+            235,
+        )
+
+        section_outline = (
+            220,
+            190,
+            255,
+            255,
+        )
+
+        # --------------------------------------------------
+        # DRAW SECTION HEADER
+        # --------------------------------------------------
+
+        def draw_section_label(
+            x,
+            y,
+            text,
+        ):
+
+            text_width, text_height = (
+                measure_text(
+                    draw,
+                    text,
+                    section_font,
+                )
+            )
+
+            padding_x = 34
+            padding_y = 20
+
+            x1 = (
+                x
+                - text_width / 2
+                - padding_x
+            )
+
+            y1 = (
+                y
+                - text_height / 2
+                - padding_y
+            )
+
+            x2 = (
+                x
+                + text_width / 2
+                + padding_x
+            )
+
+            y2 = (
+                y
+                + text_height / 2
+                + padding_y
+            )
+
+            draw.rounded_rectangle(
+                (
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                ),
+                radius=20,
+                fill=section_fill,
+                outline=section_outline,
+                width=5,
+            )
+
+            draw.text(
+                (
+                    x,
+                    y,
+                ),
+                text,
+                font=section_font,
+                fill=section_text_color,
+                anchor="mm",
+            )
+
+        # --------------------------------------------------
+        # YOUR SIDE
+        # --------------------------------------------------
+
+        draw_section_label(
+            user_x,
+            center_y + 165,
             f"{user_name}'S RELATIONSHIPS",
-            font=section_font,
-            fill=TEXT_COLOR,
-            anchor="ma",
         )
 
-        draw.text(
-            (
-                spouse_x,
-                center_y + 150,
-            ),
+        # --------------------------------------------------
+        # SPOUSE SIDE
+        # --------------------------------------------------
+
+        draw_section_label(
+            spouse_x,
+            center_y + 165,
             f"{spouse_name}'S RELATIONSHIPS",
-            font=section_font,
-            fill=TEXT_COLOR,
-            anchor="ma",
         )
-
     # ==================================================
     # SAVE IMAGE
     # ==================================================
