@@ -65,7 +65,6 @@ async def alter_belongs_to_user(
     )
 
     if not profile:
-
         return None, None
 
     alter = await get_alter_profile(
@@ -73,7 +72,6 @@ async def alter_belongs_to_user(
     )
 
     if not alter:
-
         return profile, None
 
     if (
@@ -106,15 +104,9 @@ def build_alter_embed(
     )
 
     embed = discord.Embed(
-        title=(
-            f"{proxy} {name}"
-        ),
-        description=(
-            "✨ **ALTER PROFILE** ✨"
-        ),
-        colour=(
-            discord.Colour.blurple()
-        ),
+        title=f"{proxy} {name}",
+        description="✨ **ALTER PROFILE** ✨",
+        colour=discord.Colour.blurple(),
     )
 
     embed.add_field(
@@ -180,9 +172,7 @@ def build_alter_embed(
     embed.add_field(
         name="🎨 Hobbies / Interests",
         value=safe_text(
-            alter.get(
-                "hobbies"
-            )
+            alter.get("hobbies")
         ),
         inline=False,
     )
@@ -206,9 +196,7 @@ def build_alter_embed(
     embed.add_field(
         name="💌 DM Status",
         value=safe_text(
-            alter.get(
-                "dm_status"
-            )
+            alter.get("dm_status")
         ),
         inline=True,
     )
@@ -238,9 +226,7 @@ def build_alter_embed(
     embed.add_field(
         name="🛡️ Boundaries",
         value=safe_text(
-            alter.get(
-                "boundaries"
-            )
+            alter.get("boundaries")
         ),
         inline=False,
     )
@@ -256,9 +242,7 @@ def build_alter_embed(
     embed.add_field(
         name="🧸 About Me",
         value=safe_text(
-            alter.get(
-                "about_me"
-            )
+            alter.get("about_me")
         ),
         inline=False,
     )
@@ -269,9 +253,7 @@ def build_alter_embed(
     ):
 
         embed.set_footer(
-            text=(
-                f"Alter {page} of {total}"
-            )
+            text=f"Alter {page} of {total}"
         )
 
     else:
@@ -306,13 +288,10 @@ class AlterBrowserView(
 
         self.bot = bot
         self.viewer_id = viewer_id
-
         self.system_profile_id = (
             system_profile_id
         )
-
         self.alters = alters
-
         self.current_index = (
             current_index
         )
@@ -358,16 +337,10 @@ class AlterBrowserView(
 
         return True
 
-    # ==================================================
-    # PREVIOUS
-    # ==================================================
-
     @discord.ui.button(
         label="Previous",
         emoji="◀️",
-        style=(
-            discord.ButtonStyle.secondary
-        ),
+        style=discord.ButtonStyle.secondary,
     )
     async def previous_button(
         self,
@@ -395,15 +368,9 @@ class AlterBrowserView(
             view=self,
         )
 
-    # ==================================================
-    # PAGE
-    # ==================================================
-
     @discord.ui.button(
         label="1/1",
-        style=(
-            discord.ButtonStyle.primary
-        ),
+        style=discord.ButtonStyle.primary,
         disabled=True,
     )
     async def page_button(
@@ -414,16 +381,10 @@ class AlterBrowserView(
 
         pass
 
-    # ==================================================
-    # NEXT
-    # ==================================================
-
     @discord.ui.button(
         label="Next",
         emoji="▶️",
-        style=(
-            discord.ButtonStyle.secondary
-        ),
+        style=discord.ButtonStyle.secondary,
     )
     async def next_button(
         self,
@@ -451,16 +412,10 @@ class AlterBrowserView(
             view=self,
         )
 
-    # ==================================================
-    # SYSTEM PROFILE
-    # ==================================================
-
     @discord.ui.button(
         label="System Profile",
         emoji="🌸",
-        style=(
-            discord.ButtonStyle.success
-        ),
+        style=discord.ButtonStyle.success,
         row=1,
     )
     async def system_profile_button(
@@ -469,11 +424,18 @@ class AlterBrowserView(
         button: discord.ui.Button,
     ):
 
-        profile = (
-            await get_system_profile_by_id(
-                self.system_profile_id
+        try:
+
+            profile = (
+                await get_system_profile_by_id(
+                    self.system_profile_id
+                )
             )
-        )
+
+        except Exception:
+
+            traceback.print_exc()
+            profile = None
 
         if not profile:
 
@@ -486,6 +448,9 @@ class AlterBrowserView(
             )
 
         guild = interaction.guild
+
+        if guild is None:
+            return
 
         member = guild.get_member(
             profile["user_id"]
@@ -515,11 +480,17 @@ class AlterBrowserView(
                 ephemeral=True,
             )
 
-        alters = (
-            await get_alter_profiles(
-                self.system_profile_id
+        try:
+
+            alters = (
+                await get_alter_profiles(
+                    self.system_profile_id
+                )
             )
-        )
+
+        except Exception:
+
+            alters = []
 
         embed = (
             build_system_profile_embed(
@@ -534,16 +505,10 @@ class AlterBrowserView(
             view=self,
         )
 
-    # ==================================================
-    # CLOSE
-    # ==================================================
-
     @discord.ui.button(
         label="Close",
         emoji="✖️",
-        style=(
-            discord.ButtonStyle.danger
-        ),
+        style=discord.ButtonStyle.danger,
         row=1,
     )
     async def close_button(
@@ -555,16 +520,14 @@ class AlterBrowserView(
         self.stop()
 
         await interaction.response.edit_message(
-            content=(
-                "🌸 Alter browser closed."
-            ),
+            content="🌸 Alter browser closed.",
             embed=None,
             view=None,
         )
 
 
 # ==================================================
-# PUBLIC BROWSE BUTTON
+# PUBLIC SYSTEM PROFILE BROWSE BUTTON
 # ==================================================
 
 class SystemAlterButtonView(
@@ -582,7 +545,6 @@ class SystemAlterButtonView(
         )
 
         self.bot = bot
-
         self.system_profile_id = (
             system_profile_id
         )
@@ -590,9 +552,7 @@ class SystemAlterButtonView(
         button = discord.ui.Button(
             label="Browse Alters",
             emoji="🌸",
-            style=(
-                discord.ButtonStyle.primary
-            ),
+            style=discord.ButtonStyle.primary,
             custom_id=(
                 f"system_alters:"
                 f"{system_profile_id}"
@@ -642,17 +602,13 @@ class SystemAlterButtonView(
                 ephemeral=True,
             )
 
-        browser = (
-            AlterBrowserView(
-                bot=self.bot,
-                viewer_id=(
-                    interaction.user.id
-                ),
-                system_profile_id=(
-                    self.system_profile_id
-                ),
-                alters=alters,
-            )
+        browser = AlterBrowserView(
+            bot=self.bot,
+            viewer_id=interaction.user.id,
+            system_profile_id=(
+                self.system_profile_id
+            ),
+            alters=alters,
         )
 
         await interaction.response.send_message(
@@ -685,17 +641,13 @@ async def refresh_system_profile_message(
         )
 
         if not settings:
-
             return
 
-        channel_id = (
-            settings.get(
-                "profile_channel_id"
-            )
+        channel_id = settings.get(
+            "profile_channel_id"
         )
 
         if not channel_id:
-
             return
 
         channel = guild.get_channel(
@@ -703,7 +655,6 @@ async def refresh_system_profile_message(
         )
 
         if channel is None:
-
             return
 
         message_id = profile.get(
@@ -711,7 +662,6 @@ async def refresh_system_profile_message(
         )
 
         if not message_id:
-
             return
 
         member = guild.get_member(
@@ -729,7 +679,6 @@ async def refresh_system_profile_message(
                 )
 
             except Exception:
-
                 return
 
         alters = (
@@ -766,9 +715,429 @@ async def refresh_system_profile_message(
 
 
 # ==================================================
+# PROXY EMOJI OPTIONS
+# ==================================================
+
+COMMON_PROXY_EMOJIS = [
+    ("Flower", "🌸"),
+    ("Teddy", "🧸"),
+    ("Paw", "🐾"),
+    ("Moon", "🌙"),
+    ("Star", "⭐"),
+    ("Sparkles", "✨"),
+    ("Pink Heart", "💗"),
+    ("Purple Heart", "💜"),
+    ("Blue Heart", "💙"),
+    ("Green Heart", "💚"),
+    ("Red Heart", "❤️"),
+    ("Butterfly", "🦋"),
+    ("Rose", "🌹"),
+    ("Sunflower", "🌻"),
+    ("Mushroom", "🍄"),
+    ("Strawberry", "🍓"),
+    ("Cherry", "🍒"),
+    ("Cat", "🐱"),
+    ("Fox", "🦊"),
+    ("Wolf", "🐺"),
+    ("Bunny", "🐰"),
+    ("Frog", "🐸"),
+    ("Dragon", "🐉"),
+    ("Ghost", "👻"),
+]
+
+
+# ==================================================
+# ALTER EMOJI SELECTOR
+# ==================================================
+
+class AlterEmojiSelectView(
+    discord.ui.View
+):
+
+    PAGE_SIZE = 24
+
+    def __init__(
+        self,
+        bot,
+        guild_id: int,
+        user_id: int,
+        system_profile_id: int,
+        data: dict,
+        alter_id: int | None = None,
+    ):
+
+        super().__init__(
+            timeout=600
+        )
+
+        self.bot = bot
+        self.guild_id = guild_id
+        self.user_id = user_id
+
+        self.system_profile_id = (
+            system_profile_id
+        )
+
+        self.data = data
+        self.alter_id = alter_id
+
+        self.page = 0
+        self.emoji_items = []
+
+        # --------------------------------------------------
+        # NORMAL EMOJIS
+        # --------------------------------------------------
+
+        for label, emoji in COMMON_PROXY_EMOJIS:
+
+            self.emoji_items.append(
+                {
+                    "label": label,
+                    "value": (
+                        f"unicode:{emoji}"
+                    ),
+                    "emoji": emoji,
+                    "text": emoji,
+                }
+            )
+
+        # --------------------------------------------------
+        # SERVER CUSTOM EMOJIS
+        # --------------------------------------------------
+
+        guild = self.bot.get_guild(
+            guild_id
+        )
+
+        if guild:
+
+            for emoji in guild.emojis:
+
+                self.emoji_items.append(
+                    {
+                        "label": (
+                            emoji.name[:100]
+                        ),
+                        "value": (
+                            f"custom:{emoji.id}"
+                        ),
+                        "emoji": emoji,
+                        "text": str(emoji),
+                    }
+                )
+
+        self.build_select()
+
+    # ==================================================
+    # TOTAL PAGES
+    # ==================================================
+
+    def total_pages(self):
+
+        if not self.emoji_items:
+            return 1
+
+        return (
+            (
+                len(self.emoji_items)
+                - 1
+            )
+            // self.PAGE_SIZE
+        ) + 1
+
+    # ==================================================
+    # BUILD SELECT
+    # ==================================================
+
+    def build_select(self):
+
+        # Remove existing dropdown first
+        for item in list(
+            self.children
+        ):
+
+            if isinstance(
+                item,
+                discord.ui.Select,
+            ):
+
+                self.remove_item(
+                    item
+                )
+
+        start = (
+            self.page
+            * self.PAGE_SIZE
+        )
+
+        end = (
+            start
+            + self.PAGE_SIZE
+        )
+
+        page_items = (
+            self.emoji_items[
+                start:end
+            ]
+        )
+
+        options = [
+            discord.SelectOption(
+                label="No Emoji",
+                value="none",
+                emoji="🚫",
+                description=(
+                    "Don't use a proxy emoji"
+                ),
+            )
+        ]
+
+        for item in page_items:
+
+            try:
+
+                options.append(
+                    discord.SelectOption(
+                        label=(
+                            item["label"][:100]
+                        ),
+                        value=item["value"],
+                        emoji=item["emoji"],
+                    )
+                )
+
+            except Exception:
+                continue
+
+        select = discord.ui.Select(
+            placeholder=(
+                "Choose a proxy emoji"
+            ),
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+        select.callback = (
+            self.emoji_selected
+        )
+
+        self.add_item(
+            select
+        )
+
+        self.update_buttons()
+
+    # ==================================================
+    # BUTTON STATE
+    # ==================================================
+
+    def update_buttons(self):
+
+        total = self.total_pages()
+
+        self.page_number.label = (
+            f"{self.page + 1}/{total}"
+        )
+
+        self.previous_page.disabled = (
+            total <= 1
+        )
+
+        self.next_page.disabled = (
+            total <= 1
+        )
+
+    # ==================================================
+    # SECURITY
+    # ==================================================
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if (
+            interaction.user.id
+            != self.user_id
+        ):
+
+            await interaction.response.send_message(
+                (
+                    "❌ This emoji picker "
+                    "isn't for you."
+                ),
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    # ==================================================
+    # EMOJI SELECTED
+    # ==================================================
+
+    async def emoji_selected(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        select = next(
+            (
+                child
+                for child
+                in self.children
+
+                if isinstance(
+                    child,
+                    discord.ui.Select,
+                )
+            ),
+            None,
+        )
+
+        if select is None:
+            return
+
+        selected = (
+            select.values[0]
+        )
+
+        if selected == "none":
+
+            self.data[
+                "proxy_emoji"
+            ] = ""
+
+        else:
+
+            found = None
+
+            for item in self.emoji_items:
+
+                if (
+                    item["value"]
+                    == selected
+                ):
+
+                    found = item
+                    break
+
+            if found:
+
+                self.data[
+                    "proxy_emoji"
+                ] = found["text"]
+
+        self.stop()
+
+        await interaction.response.send_modal(
+            AlterIdentityModal(
+                bot=self.bot,
+                guild_id=self.guild_id,
+                user_id=self.user_id,
+                system_profile_id=(
+                    self.system_profile_id
+                ),
+                data=self.data,
+                alter_id=self.alter_id,
+            )
+        )
+
+    # ==================================================
+    # PREVIOUS PAGE
+    # ==================================================
+
+    @discord.ui.button(
+        label="Previous",
+        emoji="◀️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        total = self.total_pages()
+
+        self.page -= 1
+
+        if self.page < 0:
+
+            self.page = (
+                total - 1
+            )
+
+        self.build_select()
+
+        await interaction.response.edit_message(
+            content=(
+                "🌸 **Choose a Proxy Emoji**\n\n"
+                "Choose a normal emoji or "
+                "one of the server's custom emojis."
+            ),
+            view=self,
+        )
+
+    # ==================================================
+    # PAGE NUMBER
+    # ==================================================
+
+    @discord.ui.button(
+        label="1/1",
+        style=discord.ButtonStyle.primary,
+        disabled=True,
+        row=1,
+    )
+    async def page_number(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        pass
+
+    # ==================================================
+    # NEXT PAGE
+    # ==================================================
+
+    @discord.ui.button(
+        label="Next",
+        emoji="▶️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        total = self.total_pages()
+
+        self.page += 1
+
+        if self.page >= total:
+            self.page = 0
+
+        self.build_select()
+
+        await interaction.response.edit_message(
+            content=(
+                "🌸 **Choose a Proxy Emoji**\n\n"
+                "Choose a normal emoji or "
+                "one of the server's custom emojis."
+            ),
+            view=self,
+        )
+
+
+# ==================================================
 # ALTER BASIC FORM
-#
-# Used for BOTH add and edit.
 # ==================================================
 
 class AlterBasicModal(
@@ -801,8 +1170,8 @@ class AlterBasicModal(
             system_profile_id
         )
 
-        self.existing = (
-            dict(existing or {})
+        self.existing = dict(
+            existing or {}
         )
 
         self.alter_id = alter_id
@@ -871,21 +1240,6 @@ class AlterBasicModal(
             )
         )
 
-        self.proxy_emoji = (
-            discord.ui.TextInput(
-                label="Proxy / Emoji",
-                placeholder="Example: 🌸",
-                required=False,
-                max_length=100,
-                default=(
-                    self.existing.get(
-                        "proxy_emoji"
-                    )
-                    or ""
-                ),
-            )
-        )
-
         self.add_item(
             self.name_input
         )
@@ -900,10 +1254,6 @@ class AlterBasicModal(
 
         self.add_item(
             self.age
-        )
-
-        self.add_item(
-            self.proxy_emoji
         )
 
     async def on_submit(
@@ -936,25 +1286,45 @@ class AlterBasicModal(
                     str(
                         self.age.value
                     ).strip(),
-
-                "proxy_emoji":
-                    str(
-                        self.proxy_emoji.value
-                    ).strip(),
             }
         )
 
-        await interaction.response.send_modal(
-            AlterIdentityModal(
-                bot=self.bot,
-                guild_id=self.guild_id,
-                user_id=self.user_id,
-                system_profile_id=(
-                    self.system_profile_id
-                ),
-                data=data,
-                alter_id=self.alter_id,
+        view = AlterEmojiSelectView(
+            bot=self.bot,
+            guild_id=self.guild_id,
+            user_id=self.user_id,
+            system_profile_id=(
+                self.system_profile_id
+            ),
+            data=data,
+            alter_id=self.alter_id,
+        )
+
+        current = data.get(
+            "proxy_emoji"
+        )
+
+        if current:
+
+            message = (
+                "🌸 **Choose a Proxy Emoji**\n\n"
+                f"Current emoji: {current}\n\n"
+                "Choose a normal emoji or "
+                "one of the server's custom emojis."
             )
+
+        else:
+
+            message = (
+                "🌸 **Choose a Proxy Emoji**\n\n"
+                "Choose a normal emoji or "
+                "one of the server's custom emojis."
+            )
+
+        await interaction.response.send_message(
+            message,
+            view=view,
+            ephemeral=True,
         )
 
 
@@ -1002,9 +1372,7 @@ class AlterIdentityModal(
                 required=False,
                 max_length=100,
                 default=(
-                    data.get(
-                        "gender"
-                    )
+                    data.get("gender")
                     or ""
                 ),
             )
@@ -1045,9 +1413,7 @@ class AlterIdentityModal(
                 label="Source / Introject Info",
                 placeholder="Optional",
                 required=False,
-                style=(
-                    discord.TextStyle.paragraph
-                ),
+                style=discord.TextStyle.paragraph,
                 max_length=500,
                 default=(
                     data.get(
@@ -1065,14 +1431,10 @@ class AlterIdentityModal(
                     "What do they enjoy doing?"
                 ),
                 required=False,
-                style=(
-                    discord.TextStyle.paragraph
-                ),
+                style=discord.TextStyle.paragraph,
                 max_length=500,
                 default=(
-                    data.get(
-                        "hobbies"
-                    )
+                    data.get("hobbies")
                     or ""
                 ),
             )
@@ -1132,17 +1494,15 @@ class AlterIdentityModal(
             }
         )
 
-        view = (
-            AlterSocialChoicesView(
-                bot=self.bot,
-                guild_id=self.guild_id,
-                user_id=self.user_id,
-                system_profile_id=(
-                    self.system_profile_id
-                ),
-                data=self.data,
-                alter_id=self.alter_id,
-            )
+        view = AlterSocialChoicesView(
+            bot=self.bot,
+            guild_id=self.guild_id,
+            user_id=self.user_id,
+            system_profile_id=(
+                self.system_profile_id
+            ),
+            data=self.data,
+            alter_id=self.alter_id,
         )
 
         await interaction.response.send_message(
@@ -1153,7 +1513,7 @@ class AlterIdentityModal(
 
 
 # ==================================================
-# SOCIAL CHOICES
+# ALTER SOCIAL CHOICES
 # ==================================================
 
 class AlterSocialChoicesView(
@@ -1183,30 +1543,25 @@ class AlterSocialChoicesView(
         )
 
         self.data = data
-
         self.alter_id = alter_id
 
-        self.dm_select = (
-            discord.ui.Select(
-                placeholder="Choose DM status",
-                row=0,
-                options=[
-                    discord.SelectOption(
-                        label="DMs Open",
-                        value="🟢 DMs Open",
-                    ),
-
-                    discord.SelectOption(
-                        label="Ask First",
-                        value="🟡 Ask First",
-                    ),
-
-                    discord.SelectOption(
-                        label="DMs Closed",
-                        value="🔴 DMs Closed",
-                    ),
-                ],
-            )
+        self.dm_select = discord.ui.Select(
+            placeholder="Choose DM status",
+            row=0,
+            options=[
+                discord.SelectOption(
+                    label="DMs Open",
+                    value="🟢 DMs Open",
+                ),
+                discord.SelectOption(
+                    label="Ask First",
+                    value="🟡 Ask First",
+                ),
+                discord.SelectOption(
+                    label="DMs Closed",
+                    value="🔴 DMs Closed",
+                ),
+            ],
         )
 
         self.interaction_select = (
@@ -1222,17 +1577,14 @@ class AlterSocialChoicesView(
                             "🟢 Interactions Open"
                         ),
                     ),
-
                     discord.SelectOption(
                         label="Ask First",
                         value="🟡 Ask First",
                     ),
-
                     discord.SelectOption(
                         label="Limited",
                         value="🟠 Limited",
                     ),
-
                     discord.SelectOption(
                         label="Do Not Interact",
                         value=(
@@ -1245,14 +1597,15 @@ class AlterSocialChoicesView(
 
         self.frontal_select = (
             discord.ui.Select(
-                placeholder="Frequent fronter?",
+                placeholder=(
+                    "Frequent fronter?"
+                ),
                 row=2,
                 options=[
                     discord.SelectOption(
                         label="Yes",
                         value="yes",
                     ),
-
                     discord.SelectOption(
                         label="No",
                         value="no",
@@ -1287,22 +1640,22 @@ class AlterSocialChoicesView(
 
     def status_text(self):
 
-        frequent = (
-            "Yes"
-            if self.data.get(
-                "frequent_fronter"
-            )
-            is True
+        if (
+            "frequent_fronter"
+            not in self.data
+        ):
 
-            else (
-                "No"
-                if (
-                    "frequent_fronter"
-                    in self.data
-                )
-                else "Not set"
-            )
-        )
+            frequent = "Not set"
+
+        elif self.data.get(
+            "frequent_fronter"
+        ):
+
+            frequent = "Yes"
+
+        else:
+
+            frequent = "No"
 
         return (
             "🌸 **Alter Profile — Interaction**\n\n"
@@ -1328,6 +1681,14 @@ class AlterSocialChoicesView(
             interaction.user.id
             != self.user_id
         ):
+
+            await interaction.response.send_message(
+                (
+                    "❌ This alter profile "
+                    "isn't yours."
+                ),
+                ephemeral=True,
+            )
 
             return False
 
@@ -1385,9 +1746,7 @@ class AlterSocialChoicesView(
     @discord.ui.button(
         label="Next",
         emoji="➡️",
-        style=(
-            discord.ButtonStyle.primary
-        ),
+        style=discord.ButtonStyle.primary,
         row=3,
     )
     async def next_button(
@@ -1450,7 +1809,7 @@ class AlterSocialChoicesView(
 
 
 # ==================================================
-# FINAL FORM
+# ALTER FINAL FORM
 # ==================================================
 
 class AlterFinalModal(
@@ -1489,11 +1848,11 @@ class AlterFinalModal(
         self.likes = (
             discord.ui.TextInput(
                 label="Likes",
-                placeholder="Things they like",
-                required=False,
-                style=(
-                    discord.TextStyle.paragraph
+                placeholder=(
+                    "Things they like"
                 ),
+                required=False,
+                style=discord.TextStyle.paragraph,
                 max_length=500,
                 default=(
                     data.get("likes")
@@ -1505,11 +1864,11 @@ class AlterFinalModal(
         self.dislikes = (
             discord.ui.TextInput(
                 label="Dislikes",
-                placeholder="Things they dislike",
-                required=False,
-                style=(
-                    discord.TextStyle.paragraph
+                placeholder=(
+                    "Things they dislike"
                 ),
+                required=False,
+                style=discord.TextStyle.paragraph,
                 max_length=500,
                 default=(
                     data.get("dislikes")
@@ -1525,9 +1884,7 @@ class AlterFinalModal(
                     "Interaction boundaries"
                 ),
                 required=False,
-                style=(
-                    discord.TextStyle.paragraph
-                ),
+                style=discord.TextStyle.paragraph,
                 max_length=700,
                 default=(
                     data.get("boundaries")
@@ -1543,9 +1900,7 @@ class AlterFinalModal(
                     "Do not interact if..."
                 ),
                 required=False,
-                style=(
-                    discord.TextStyle.paragraph
-                ),
+                style=discord.TextStyle.paragraph,
                 max_length=700,
                 default=(
                     data.get("dni")
@@ -1561,12 +1916,12 @@ class AlterFinalModal(
                     "Anything else they'd like to share"
                 ),
                 required=False,
-                style=(
-                    discord.TextStyle.paragraph
-                ),
+                style=discord.TextStyle.paragraph,
                 max_length=700,
                 default=(
-                    data.get("about_me")
+                    data.get(
+                        "about_me"
+                    )
                     or ""
                 ),
             )
@@ -1652,7 +2007,7 @@ class AlterFinalModal(
 
 
 # ==================================================
-# SAVE ADD / EDIT
+# ALTER PREVIEW / SAVE
 # ==================================================
 
 class AlterPreviewView(
@@ -1689,21 +2044,27 @@ class AlterPreviewView(
         interaction: discord.Interaction,
     ):
 
-        return (
+        if (
             interaction.user.id
-            == self.user_id
-        )
+            != self.user_id
+        ):
 
-    # ==================================================
-    # SAVE
-    # ==================================================
+            await interaction.response.send_message(
+                (
+                    "❌ This alter profile "
+                    "isn't yours."
+                ),
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
 
     @discord.ui.button(
         label="Save Alter",
         emoji="✅",
-        style=(
-            discord.ButtonStyle.success
-        ),
+        style=discord.ButtonStyle.success,
     )
     async def save_alter(
         self,
@@ -1726,12 +2087,19 @@ class AlterPreviewView(
                 ephemeral=True,
             )
 
-        profile = (
-            await get_system_profile(
-                self.guild_id,
-                self.user_id,
+        try:
+
+            profile = (
+                await get_system_profile(
+                    self.guild_id,
+                    self.user_id,
+                )
             )
-        )
+
+        except Exception:
+
+            traceback.print_exc()
+            profile = None
 
         if (
             not profile
@@ -1812,9 +2180,7 @@ class AlterPreviewView(
                     self.alter_id
                 )
 
-                action_text = (
-                    "updated"
-                )
+                action_text = "updated"
 
             except Exception:
 
@@ -1953,9 +2319,7 @@ class AlterPreviewView(
                     )
                 )
 
-                action_text = (
-                    "added"
-                )
+                action_text = "added"
 
             except Exception:
 
@@ -1970,7 +2334,7 @@ class AlterPreviewView(
                 )
 
         # --------------------------------------------------
-        # REFRESH PUBLIC PROFILE
+        # REFRESH PUBLIC SYSTEM PROFILE
         # --------------------------------------------------
 
         await refresh_system_profile_message(
@@ -1980,7 +2344,7 @@ class AlterPreviewView(
         )
 
         # --------------------------------------------------
-        # DISABLE PREVIEW BUTTONS
+        # DISABLE PREVIEW
         # --------------------------------------------------
 
         for child in self.children:
@@ -1994,7 +2358,6 @@ class AlterPreviewView(
             )
 
         except discord.HTTPException:
-
             pass
 
         alters = (
@@ -2016,16 +2379,10 @@ class AlterPreviewView(
 
         self.stop()
 
-    # ==================================================
-    # CANCEL
-    # ==================================================
-
     @discord.ui.button(
         label="Cancel",
         emoji="✖️",
-        style=(
-            discord.ButtonStyle.danger
-        ),
+        style=discord.ButtonStyle.danger,
     )
     async def cancel(
         self,
@@ -2045,7 +2402,7 @@ class AlterPreviewView(
 
 
 # ==================================================
-# REMOVE CONFIRMATION
+# DELETE ALTER CONFIRMATION
 # ==================================================
 
 class DeleteAlterConfirmView(
@@ -2066,10 +2423,8 @@ class DeleteAlterConfirmView(
         )
 
         self.bot = bot
-
         self.guild_id = guild_id
         self.user_id = user_id
-
         self.profile = profile
         self.alter = alter
 
@@ -2095,16 +2450,10 @@ class DeleteAlterConfirmView(
 
         return True
 
-    # ==================================================
-    # DELETE
-    # ==================================================
-
     @discord.ui.button(
         label="Delete Alter",
         emoji="🗑️",
-        style=(
-            discord.ButtonStyle.danger
-        ),
+        style=discord.ButtonStyle.danger,
     )
     async def confirm_delete(
         self,
@@ -2161,7 +2510,6 @@ class DeleteAlterConfirmView(
             )
 
         except discord.HTTPException:
-
             pass
 
         await interaction.followup.send(
@@ -2172,16 +2520,10 @@ class DeleteAlterConfirmView(
             ephemeral=True,
         )
 
-    # ==================================================
-    # CANCEL DELETE
-    # ==================================================
-
     @discord.ui.button(
         label="Cancel",
         emoji="✖️",
-        style=(
-            discord.ButtonStyle.secondary
-        ),
+        style=discord.ButtonStyle.secondary,
     )
     async def cancel_delete(
         self,
@@ -2192,9 +2534,7 @@ class DeleteAlterConfirmView(
         self.stop()
 
         await interaction.response.edit_message(
-            content=(
-                "✅ Nothing was deleted."
-            ),
+            content="✅ Nothing was deleted.",
             embed=None,
             view=None,
         )
@@ -2223,7 +2563,7 @@ class Alters(
         self.bot = bot
 
     # ==================================================
-    # RESTORE PUBLIC BUTTONS AFTER REDEPLOY
+    # RESTORE BROWSE BUTTONS AFTER REDEPLOY
     # ==================================================
 
     async def cog_load(self):
@@ -2250,7 +2590,8 @@ class Alters(
             print(
                 (
                     "⚠️ Couldn't restore "
-                    f"System Profile buttons: {e}"
+                    "System Profile buttons: "
+                    f"{e}"
                 )
             )
 
@@ -2280,7 +2621,7 @@ class Alters(
 
                 print(
                     (
-                        f"⚠️ Couldn't restore "
+                        "⚠️ Couldn't restore "
                         f"System Profile "
                         f"{row['id']}: {e}"
                     )
@@ -2320,7 +2661,6 @@ class Alters(
         except Exception:
 
             traceback.print_exc()
-
             profile = None
 
         if not profile:
@@ -2364,12 +2704,19 @@ class Alters(
         interaction: discord.Interaction,
     ):
 
-        profile = (
-            await get_system_profile(
-                interaction.guild.id,
-                interaction.user.id,
+        try:
+
+            profile = (
+                await get_system_profile(
+                    interaction.guild.id,
+                    interaction.user.id,
+                )
             )
-        )
+
+        except Exception:
+
+            traceback.print_exc()
+            profile = None
 
         if not profile:
 
@@ -2422,22 +2769,17 @@ class Alters(
             )
 
         embed = discord.Embed(
-            title=(
-                "🌸 Your Alter Profiles"
+            title="🌸 Your Alter Profiles",
+            description="\n".join(
+                lines
             ),
-            description=(
-                "\n".join(
-                    lines
-                )
-            ),
-            colour=(
-                discord.Colour.blurple()
-            ),
+            colour=discord.Colour.blurple(),
         )
 
         embed.set_footer(
             text=(
-                f"{len(alters)} alter profile(s)"
+                f"{len(alters)} "
+                "alter profile(s)"
             )
         )
 
@@ -2505,8 +2847,8 @@ class Alters(
                 (
                     "❌ I couldn't find an alter "
                     "with that ID on your system.\n\n"
-                    "Use `/alter list` to check "
-                    "the correct ID."
+                    "Use `/alter list` to "
+                    "check the ID."
                 ),
                 ephemeral=True,
             )
@@ -2587,7 +2929,8 @@ class Alters(
                 (
                     "❌ I couldn't find an alter "
                     "with that ID on your system.\n\n"
-                    "Use `/alter list` to check it."
+                    "Use `/alter list` to "
+                    "check the ID."
                 ),
                 ephemeral=True,
             )
