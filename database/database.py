@@ -113,6 +113,12 @@ class Database:
                 closed BOOLEAN NOT NULL DEFAULT FALSE
             )
             """
+        )      
+        await self.execute(
+            """
+            ALTER TABLE tickets
+            ADD COLUMN IF NOT EXISTS closed BOOLEAN NOT NULL DEFAULT FALSE
+            """
         )
 
     # --------------------------------------------------
