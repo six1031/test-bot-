@@ -134,10 +134,11 @@ class BaseTicketView(discord.ui.View):
         # Staff can open unlimited tickets
         if staff_role not in interaction.user.roles:
 
-            if await has_open_ticket(
-                interaction.user.id,
-                self.ticket_type,
-            ):
+        if await has_open_ticket(
+            interaction.guild.id,
+            interaction.user.id,
+            self.ticket_type,
+        ):
                 return await interaction.response.send_message(
                     f"❌ You already have an open "
                     f"{self.ticket_type} ticket.",
