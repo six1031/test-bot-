@@ -26,8 +26,9 @@ async def remove_panel(message_id):
 # TICKET FUNCTIONS
 # --------------------------------------------------
 
-async def create_ticket(channel_id, owner_id, ticket_type):
+async def create_ticket(guild_id, channel_id, owner_id, ticket_type):
     await db.create_ticket(
+        guild_id,
         channel_id,
         owner_id,
         ticket_type,
