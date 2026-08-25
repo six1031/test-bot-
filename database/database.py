@@ -6,16 +6,27 @@ from typing import Optional
 
 
 class Database:
+
     def __init__(self):
+
         self.pool: asyncpg.pool.Pool | None = None
-        self._dsn = os.getenv("DATABASE_URL")
 
-    # --------------------------------------------------
+        self._dsn = os.getenv(
+            "DATABASE_URL"
+        )
+
+    # ==================================================
     # CONNECTION
-    # --------------------------------------------------
+    # ==================================================
 
-    async def connect(self, min_size: int = 1, max_size: int = 10):
+    async def connect(
+        self,
+        min_size: int = 1,
+        max_size: int = 10,
+    ):
+
         if not self._dsn:
+
             raise RuntimeError(
                 "DATABASE_URL environment variable is not set."
             )
@@ -29,49 +40,98 @@ class Database:
             max_size=max_size,
         )
 
-    async def close(self):
+    async def close(
+        self,
+    ):
+
         if self.pool:
+
             await self.pool.close()
+
             self.pool = None
 
-    # --------------------------------------------------
+    # ==================================================
     # BASIC DATABASE HELPERS
-    # --------------------------------------------------
+    # ==================================================
 
-    async def execute(self, query: str, *args):
+    async def execute(
+        self,
+        query: str,
+        *args,
+    ):
+
         if not self.pool:
+
             raise RuntimeError(
-                "Database pool is not initialized. Call db.connect() first."
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
             )
 
         async with self.pool.acquire() as conn:
-            return await conn.execute(query, *args)
 
-    async def fetch(self, query: str, *args):
+            return await conn.execute(
+                query,
+                *args,
+            )
+
+    async def fetch(
+        self,
+        query: str,
+        *args,
+    ):
+
         if not self.pool:
+
             raise RuntimeError(
-                "Database pool is not initialized. Call db.connect() first."
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
             )
 
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
 
-    async def fetchrow(self, query: str, *args):
+            return await conn.fetch(
+                query,
+                *args,
+            )
+
+    async def fetchrow(
+        self,
+        query: str,
+        *args,
+    ):
+
         if not self.pool:
+
             raise RuntimeError(
-                "Database pool is not initialized. Call db.connect() first."
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
             )
 
         async with self.pool.acquire() as conn:
-            return await conn.fetchrow(query, *args)
 
-    # --------------------------------------------------
+            return await conn.fetchrow(
+                query,
+                *args,
+            )
+
+    # ==================================================
     # DATABASE MIGRATIONS
-    # --------------------------------------------------
+    # ==================================================
 
-    async def run_migrations(self):
+    async def run_migrations(
+        self,
+    ):
 
-        # Ticket panel storage
+        # ==================================================
+        # TICKET PANEL STORAGE
+        # ==================================================
+
         await self.execute(
             """
             CREATE TABLE IF NOT EXISTS ticket_panels (
@@ -83,7 +143,10 @@ class Database:
             """
         )
 
-        # Remove old duplicate panel records
+        # --------------------------------------------------
+        # REMOVE OLD DUPLICATE PANEL RECORDS
+        # --------------------------------------------------
+
         await self.execute(
             """
             DELETE FROM ticket_panels a
@@ -93,7 +156,10 @@ class Database:
             """
         )
 
-        # Make message_id unique on older versions
+        # --------------------------------------------------
+        # MAKE MESSAGE ID UNIQUE
+        # --------------------------------------------------
+
         await self.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS
@@ -102,7 +168,10 @@ class Database:
             """
         )
 
-        # Ticket storage
+        # ==================================================
+        # TICKET STORAGE
+        # ==================================================
+
         await self.execute(
             """
             CREATE TABLE IF NOT EXISTS tickets (
@@ -115,7 +184,10 @@ class Database:
             """
         )
 
-        # Add closed column to older ticket tables
+        # --------------------------------------------------
+        # ADD CLOSED COLUMN TO OLD TABLES
+        # --------------------------------------------------
+
         await self.execute(
             """
             ALTER TABLE tickets
@@ -124,7 +196,10 @@ class Database:
             """
         )
 
-        # Add guild_id to older ticket tables
+        # --------------------------------------------------
+        # ADD GUILD ID TO OLD TABLES
+        # --------------------------------------------------
+
         await self.execute(
             """
             ALTER TABLE tickets
@@ -132,9 +207,91 @@ class Database:
             """
         )
 
-    # --------------------------------------------------
+        # ==================================================
+        # PROFILE SYSTEM SETTINGS
+        #
+        # These are stored in guild_settings so every
+        # server can have its own:
+        #
+        # - Verified role
+        # - Intro/profile channel
+        # ==================================================
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS verified_role BIGINT
+            """
+        )
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS intro_channel BIGINT
+            """
+        )
+
+        # ==================================================
+        # MEMBER PROFILE STORAGE
+        # ==================================================
+
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS member_profiles (
+
+                guild_id BIGINT NOT NULL,
+
+                user_id BIGINT NOT NULL,
+
+                nickname TEXT NOT NULL,
+
+                age TEXT,
+
+                gender TEXT,
+
+                pronouns TEXT,
+
+                sexuality TEXT,
+
+                languages TEXT,
+
+                relationship_status TEXT,
+
+                likes TEXT,
+
+                dislikes TEXT,
+
+                dni TEXT,
+
+                dm_status TEXT,
+
+                extra TEXT,
+
+                intro_message_id BIGINT,
+
+                profile_complete BOOLEAN
+                    NOT NULL
+                    DEFAULT FALSE,
+
+                created_at TIMESTAMP
+                    NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                updated_at TIMESTAMP
+                    NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    guild_id,
+                    user_id
+                )
+            )
+            """
+        )
+
+    # ==================================================
     # TICKET PANELS
-    # --------------------------------------------------
+    # ==================================================
 
     async def add_ticket_panel(
         self,
@@ -143,6 +300,7 @@ class Database:
         message_id: int,
         panel_type: str,
     ):
+
         await self.execute(
             """
             INSERT INTO ticket_panels (
@@ -151,7 +309,13 @@ class Database:
                 message_id,
                 panel_type
             )
-            VALUES ($1, $2, $3, $4)
+
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4
+            )
 
             ON CONFLICT (message_id)
             DO NOTHING
@@ -162,7 +326,10 @@ class Database:
             panel_type,
         )
 
-    async def get_ticket_panels(self):
+    async def get_ticket_panels(
+        self,
+    ):
+
         return await self.fetch(
             """
             SELECT
@@ -178,6 +345,7 @@ class Database:
         self,
         message_id: int,
     ):
+
         await self.execute(
             """
             DELETE FROM ticket_panels
@@ -186,9 +354,9 @@ class Database:
             message_id,
         )
 
-    # --------------------------------------------------
+    # ==================================================
     # TICKETS
-    # --------------------------------------------------
+    # ==================================================
 
     async def create_ticket(
         self,
@@ -197,6 +365,7 @@ class Database:
         owner_id: int,
         ticket_type: str,
     ):
+
         await self.execute(
             """
             INSERT INTO tickets (
@@ -206,13 +375,25 @@ class Database:
                 ticket_type,
                 closed
             )
-            VALUES ($1, $2, $3, $4, FALSE)
+
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                FALSE
+            )
 
             ON CONFLICT (channel_id)
+
             DO UPDATE SET
+
                 guild_id = EXCLUDED.guild_id,
+
                 owner_id = EXCLUDED.owner_id,
+
                 ticket_type = EXCLUDED.ticket_type,
+
                 closed = FALSE
             """,
             guild_id,
@@ -225,10 +406,13 @@ class Database:
         self,
         channel_id: int,
     ):
+
         await self.execute(
             """
             UPDATE tickets
+
             SET closed = TRUE
+
             WHERE channel_id = $1
             """,
             channel_id,
@@ -240,6 +424,7 @@ class Database:
         owner_id: int,
         ticket_type: str,
     ):
+
         return await self.fetchrow(
             """
             SELECT
@@ -248,11 +433,14 @@ class Database:
                 owner_id,
                 ticket_type,
                 closed
+
             FROM tickets
+
             WHERE guild_id = $1
               AND owner_id = $2
               AND ticket_type = $3
               AND closed = FALSE
+
             LIMIT 1
             """,
             guild_id,
@@ -260,9 +448,361 @@ class Database:
             ticket_type,
         )
 
+    # ==================================================
+    # MEMBER PROFILES
+    # ==================================================
+
+    async def save_member_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+        nickname: str,
+        age: str | None = None,
+        gender: str | None = None,
+        pronouns: str | None = None,
+        sexuality: str | None = None,
+        languages: str | None = None,
+        relationship_status: str | None = None,
+        likes: str | None = None,
+        dislikes: str | None = None,
+        dni: str | None = None,
+        dm_status: str | None = None,
+        extra: str | None = None,
+        intro_message_id: int | None = None,
+        profile_complete: bool = True,
+    ):
+
+        await self.execute(
+            """
+            INSERT INTO member_profiles (
+
+                guild_id,
+
+                user_id,
+
+                nickname,
+
+                age,
+
+                gender,
+
+                pronouns,
+
+                sexuality,
+
+                languages,
+
+                relationship_status,
+
+                likes,
+
+                dislikes,
+
+                dni,
+
+                dm_status,
+
+                extra,
+
+                intro_message_id,
+
+                profile_complete,
+
+                updated_at
+            )
+
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11,
+                $12,
+                $13,
+                $14,
+                $15,
+                $16,
+                CURRENT_TIMESTAMP
+            )
+
+            ON CONFLICT (
+                guild_id,
+                user_id
+            )
+
+            DO UPDATE SET
+
+                nickname = EXCLUDED.nickname,
+
+                age = EXCLUDED.age,
+
+                gender = EXCLUDED.gender,
+
+                pronouns = EXCLUDED.pronouns,
+
+                sexuality = EXCLUDED.sexuality,
+
+                languages = EXCLUDED.languages,
+
+                relationship_status =
+                    EXCLUDED.relationship_status,
+
+                likes = EXCLUDED.likes,
+
+                dislikes = EXCLUDED.dislikes,
+
+                dni = EXCLUDED.dni,
+
+                dm_status = EXCLUDED.dm_status,
+
+                extra = EXCLUDED.extra,
+
+                intro_message_id =
+                    COALESCE(
+                        EXCLUDED.intro_message_id,
+                        member_profiles.intro_message_id
+                    ),
+
+                profile_complete =
+                    EXCLUDED.profile_complete,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+            """,
+            guild_id,
+            user_id,
+            nickname,
+            age,
+            gender,
+            pronouns,
+            sexuality,
+            languages,
+            relationship_status,
+            likes,
+            dislikes,
+            dni,
+            dm_status,
+            extra,
+            intro_message_id,
+            profile_complete,
+        )
+
     # --------------------------------------------------
+    # GET FULL PROFILE
+    # --------------------------------------------------
+
+    async def get_member_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> Optional[dict]:
+
+        row = await self.fetchrow(
+            """
+            SELECT
+
+                guild_id,
+
+                user_id,
+
+                nickname,
+
+                age,
+
+                gender,
+
+                pronouns,
+
+                sexuality,
+
+                languages,
+
+                relationship_status,
+
+                likes,
+
+                dislikes,
+
+                dni,
+
+                dm_status,
+
+                extra,
+
+                intro_message_id,
+
+                profile_complete,
+
+                created_at,
+
+                updated_at
+
+            FROM member_profiles
+
+            WHERE guild_id = $1
+              AND user_id = $2
+            """,
+            guild_id,
+            user_id,
+        )
+
+        if not row:
+            return None
+
+        return dict(
+            row
+        )
+
+    # --------------------------------------------------
+    # GET SAVED NICKNAME
+    #
+    # Later /tree will use this.
+    # --------------------------------------------------
+
+    async def get_profile_name(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> str | None:
+
+        row = await self.fetchrow(
+            """
+            SELECT nickname
+
+            FROM member_profiles
+
+            WHERE guild_id = $1
+              AND user_id = $2
+              AND profile_complete = TRUE
+            """,
+            guild_id,
+            user_id,
+        )
+
+        if not row:
+            return None
+
+        return row[
+            "nickname"
+        ]
+
+    # --------------------------------------------------
+    # UPDATE ONE PROFILE FIELD
+    #
+    # This will be useful for /profile edit.
+    # --------------------------------------------------
+
+    async def update_member_profile_field(
+        self,
+        guild_id: int,
+        user_id: int,
+        field: str,
+        value,
+    ):
+
+        allowed_fields = {
+
+            "nickname",
+
+            "age",
+
+            "gender",
+
+            "pronouns",
+
+            "sexuality",
+
+            "languages",
+
+            "relationship_status",
+
+            "likes",
+
+            "dislikes",
+
+            "dni",
+
+            "dm_status",
+
+            "extra",
+
+            "intro_message_id",
+
+            "profile_complete",
+        }
+
+        if field not in allowed_fields:
+
+            raise ValueError(
+                "Invalid profile field."
+            )
+
+        query = f"""
+            UPDATE member_profiles
+
+            SET
+                {field} = $1,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE guild_id = $2
+              AND user_id = $3
+        """
+
+        return await self.execute(
+            query,
+            value,
+            guild_id,
+            user_id,
+        )
+
+    # --------------------------------------------------
+    # SAVE INTRO MESSAGE ID
+    # --------------------------------------------------
+
+    async def set_profile_intro_message(
+        self,
+        guild_id: int,
+        user_id: int,
+        message_id: int,
+    ):
+
+        await self.update_member_profile_field(
+            guild_id,
+            user_id,
+            "intro_message_id",
+            message_id,
+        )
+
+    # --------------------------------------------------
+    # DELETE PROFILE
+    # --------------------------------------------------
+
+    async def delete_member_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ):
+
+        return await self.execute(
+            """
+            DELETE FROM member_profiles
+
+            WHERE guild_id = $1
+              AND user_id = $2
+            """,
+            guild_id,
+            user_id,
+        )
+
+    # ==================================================
     # GUILD SETTINGS
-    # --------------------------------------------------
+    # ==================================================
 
     async def get_guild_settings(
         self,
@@ -270,22 +810,40 @@ class Database:
     ) -> Optional[dict]:
 
         if not self.pool:
+
             raise RuntimeError(
-                "Database pool is not initialized. Call db.connect() first."
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
             )
 
         async with self.pool.acquire() as conn:
+
             row = await conn.fetchrow(
                 """
                 SELECT
+
                     guild_id,
+
                     log_channel,
+
                     admin_role,
+
                     staff_role,
+
                     marriage_channel,
+
                     relationship_channel,
-                    ticket_category
+
+                    ticket_category,
+
+                    verified_role,
+
+                    intro_channel
+
                 FROM guild_settings
+
                 WHERE guild_id = $1
                 """,
                 guild_id,
@@ -295,14 +853,36 @@ class Database:
                 return None
 
             return {
-                "guild_id": row["guild_id"],
-                "log_channel": row["log_channel"],
-                "admin_role": row["admin_role"],
-                "staff_role": row["staff_role"],
-                "marriage_channel": row["marriage_channel"],
-                "relationship_channel": row["relationship_channel"],
-                "ticket_category": row["ticket_category"],
-                "enforce_only_post": False,
+
+                "guild_id":
+                    row["guild_id"],
+
+                "log_channel":
+                    row["log_channel"],
+
+                "admin_role":
+                    row["admin_role"],
+
+                "staff_role":
+                    row["staff_role"],
+
+                "marriage_channel":
+                    row["marriage_channel"],
+
+                "relationship_channel":
+                    row["relationship_channel"],
+
+                "ticket_category":
+                    row["ticket_category"],
+
+                "verified_role":
+                    row["verified_role"],
+
+                "intro_channel":
+                    row["intro_channel"],
+
+                "enforce_only_post":
+                    False,
             }
 
     async def upsert_guild_settings(
@@ -315,59 +895,115 @@ class Database:
         marriage_channel_id: int | None = None,
         relationship_channel_id: int | None = None,
         enforce_only_post: bool = False,
+
+        # --------------------------------------------------
+        # PROFILE SYSTEM
+        # --------------------------------------------------
+
+        verified_role_id: int | None = None,
+
+        intro_channel_id: int | None = None,
     ):
 
         if not self.pool:
+
             raise RuntimeError(
-                "Database pool is not initialized. Call db.connect() first."
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
             )
 
         async with self.pool.acquire() as conn:
+
             await conn.execute(
                 """
                 INSERT INTO guild_settings (
-                    guild_id,
-                    log_channel,
-                    admin_role,
-                    staff_role,
-                    ticket_category,
-                    marriage_channel,
-                    relationship_channel
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
 
-                ON CONFLICT (guild_id)
+                    guild_id,
+
+                    log_channel,
+
+                    admin_role,
+
+                    staff_role,
+
+                    ticket_category,
+
+                    marriage_channel,
+
+                    relationship_channel,
+
+                    verified_role,
+
+                    intro_channel
+                )
+
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    $7,
+                    $8,
+                    $9
+                )
+
+                ON CONFLICT (
+                    guild_id
+                )
+
                 DO UPDATE SET
 
-                    log_channel = COALESCE(
-                        EXCLUDED.log_channel,
-                        guild_settings.log_channel
-                    ),
+                    log_channel =
+                        COALESCE(
+                            EXCLUDED.log_channel,
+                            guild_settings.log_channel
+                        ),
 
-                    admin_role = COALESCE(
-                        EXCLUDED.admin_role,
-                        guild_settings.admin_role
-                    ),
+                    admin_role =
+                        COALESCE(
+                            EXCLUDED.admin_role,
+                            guild_settings.admin_role
+                        ),
 
-                    staff_role = COALESCE(
-                        EXCLUDED.staff_role,
-                        guild_settings.staff_role
-                    ),
+                    staff_role =
+                        COALESCE(
+                            EXCLUDED.staff_role,
+                            guild_settings.staff_role
+                        ),
 
-                    ticket_category = COALESCE(
-                        EXCLUDED.ticket_category,
-                        guild_settings.ticket_category
-                    ),
+                    ticket_category =
+                        COALESCE(
+                            EXCLUDED.ticket_category,
+                            guild_settings.ticket_category
+                        ),
 
-                    marriage_channel = COALESCE(
-                        EXCLUDED.marriage_channel,
-                        guild_settings.marriage_channel
-                    ),
+                    marriage_channel =
+                        COALESCE(
+                            EXCLUDED.marriage_channel,
+                            guild_settings.marriage_channel
+                        ),
 
-                    relationship_channel = COALESCE(
-                        EXCLUDED.relationship_channel,
-                        guild_settings.relationship_channel
-                    )
+                    relationship_channel =
+                        COALESCE(
+                            EXCLUDED.relationship_channel,
+                            guild_settings.relationship_channel
+                        ),
+
+                    verified_role =
+                        COALESCE(
+                            EXCLUDED.verified_role,
+                            guild_settings.verified_role
+                        ),
+
+                    intro_channel =
+                        COALESCE(
+                            EXCLUDED.intro_channel,
+                            guild_settings.intro_channel
+                        )
                 """,
                 guild_id,
                 log_channel_id,
@@ -376,11 +1012,13 @@ class Database:
                 ticket_category_id,
                 marriage_channel_id,
                 relationship_channel_id,
+                verified_role_id,
+                intro_channel_id,
             )
 
 
-# --------------------------------------------------
+# ==================================================
 # SHARED DATABASE INSTANCE
-# --------------------------------------------------
+# ==================================================
 
 db = Database()
