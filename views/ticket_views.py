@@ -5,9 +5,6 @@ from database.tickets import (
     has_open_ticket,
 )
 
-STAFF_ROLE_ID = 1428444870766231622
-TICKET_CATEGORY_ID = 1526141859213086841
-
 
 # --------------------------------------------------
 # CLOSE BUTTON
@@ -22,11 +19,28 @@ class CloseTicketView(discord.ui.View):
         style=discord.ButtonStyle.danger,
         custom_id="close_ticket",
     )
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        guild = interaction.guild
 
-        staff = interaction.guild.get_role(STAFF_ROLE_ID)
+        settings = await interaction.client.db.get_guild_settings(
+            guild.id
+        )
 
-        if staff not in interaction.user.roles:
+        if not settings or not settings.get("staff_role"):
+            return await interaction.response.send_message(
+                "❌ Staff role is not set up yet. Run `/setup` first.",
+                ephemeral=True,
+            )
+
+        staff_role = guild.get_role(
+            settings["staff_role"]
+        )
+
+        if not staff_role or staff_role not in interaction.user.roles:
             return await interaction.response.send_message(
                 "❌ Only staff can close tickets.",
                 ephemeral=True,
@@ -53,10 +67,39 @@ class BaseTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def create_ticket(self, interaction: discord.Interaction):
-
+    async def create_ticket(
+        self,
+        interaction: discord.Interaction,
+    ):
         guild = interaction.guild
-        category = guild.get_channel(TICKET_CATEGORY_ID)
+
+        # --------------------------------------------------
+        # LOAD SERVER SETTINGS
+        # --------------------------------------------------
+
+        settings = await interaction.client.db.get_guild_settings(
+            guild.id
+        )
+
+        if not settings:
+            return await interaction.response.send_message(
+                "❌ This server has not been set up yet. Run `/setup` first.",
+                ephemeral=True,
+            )
+
+        # --------------------------------------------------
+        # TICKET CATEGORY
+        # --------------------------------------------------
+
+        if not settings.get("ticket_category"):
+            return await interaction.response.send_message(
+                "❌ Ticket category is not set up yet. Run `/setup` first.",
+                ephemeral=True,
+            )
+
+        category = guild.get_channel(
+            settings["ticket_category"]
+        )
 
         if category is None:
             return await interaction.response.send_message(
@@ -64,28 +107,64 @@ class BaseTicketView(discord.ui.View):
                 ephemeral=True,
             )
 
-        # STAFF BYPASS — staff can open unlimited tickets
-        staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
+        # --------------------------------------------------
+        # STAFF ROLE
+        # --------------------------------------------------
 
+        if not settings.get("staff_role"):
+            return await interaction.response.send_message(
+                "❌ Staff role is not set up yet. Run `/setup` first.",
+                ephemeral=True,
+            )
+
+        staff_role = guild.get_role(
+            settings["staff_role"]
+        )
+
+        if staff_role is None:
+            return await interaction.response.send_message(
+                "❌ Staff role could not be found.",
+                ephemeral=True,
+            )
+
+        # --------------------------------------------------
+        # CHECK FOR EXISTING TICKET
+        # --------------------------------------------------
+
+        # Staff can open unlimited tickets
         if staff_role not in interaction.user.roles:
-            # Users can only open ONE ticket per type
-            if await has_open_ticket(interaction.user.id, self.ticket_type):
+
+            if await has_open_ticket(
+                interaction.user.id,
+                self.ticket_type,
+            ):
                 return await interaction.response.send_message(
-                    f"❌ You already have an open {self.ticket_type} ticket.",
+                    f"❌ You already have an open "
+                    f"{self.ticket_type} ticket.",
                     ephemeral=True,
                 )
 
+        # --------------------------------------------------
+        # CHANNEL PERMISSIONS
+        # --------------------------------------------------
+
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            guild.default_role: discord.PermissionOverwrite(
+                read_messages=False
+            ),
             interaction.user: discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
             ),
-            guild.get_role(STAFF_ROLE_ID): discord.PermissionOverwrite(
+            staff_role: discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
             ),
         }
+
+        # --------------------------------------------------
+        # CREATE CHANNEL
+        # --------------------------------------------------
 
         channel = await category.create_text_channel(
             name=f"{self.ticket_type}-{interaction.user.name}",
@@ -101,12 +180,16 @@ class BaseTicketView(discord.ui.View):
         # --------------------------------------------------
         # VERIFICATION MESSAGE
         # --------------------------------------------------
+
         if self.ticket_type == "verification":
             embed.description = (
                 "Hi there — thank you for opening a verification ticket with us.\n"
-                "To keep our community safe and comfy, we need you to answer a few questions and complete a quick age check.\n"
-                "You may cover everything on your ID except your date of birth and your photo.\n"
-                "Please answer all questions clearly so staff can verify you properly.\n\n"
+                "To keep our community safe and comfy, we need you to answer a "
+                "few questions and complete a quick age check.\n"
+                "You may cover everything on your ID except your date of birth "
+                "and your photo.\n"
+                "Please answer all questions clearly so staff can verify you "
+                "properly.\n\n"
 
                 "**Verification Questions:**\n"
                 "1. How old are you right now?\n"
@@ -120,9 +203,15 @@ class BaseTicketView(discord.ui.View):
                 "9. In your own words, do you see age regression as NSFW or SFW?\n\n"
 
                 "**ID Requirement:**\n"
-                "Please upload a photo of your ID with everything covered except your date of birth and your photo.\n"
-                "This is only used for age verification and will never be shared outside staff."
+                "Please upload a photo of your ID with everything covered except "
+                "your date of birth and your photo.\n"
+                "This is only used for age verification and will never be shared "
+                "outside staff."
             )
+
+        # --------------------------------------------------
+        # REPORT MESSAGE
+        # --------------------------------------------------
 
         elif self.ticket_type == "reports":
             embed.description = (
@@ -133,22 +222,38 @@ class BaseTicketView(discord.ui.View):
                 "• Evidence/screenshots"
             )
 
+        # --------------------------------------------------
+        # APPLICATION MESSAGE
+        # --------------------------------------------------
+
         elif self.ticket_type == "applications":
             embed.description = (
                 "Thank you for applying!\n\n"
                 "Please answer the staff application questions."
             )
 
+        # --------------------------------------------------
+        # CONTACT MESSAGE
+        # --------------------------------------------------
+
         elif self.ticket_type == "contact":
             embed.description = (
                 "Tell us how we can help and a staff member will respond shortly."
             )
+
+        # --------------------------------------------------
+        # SEND TICKET MESSAGE
+        # --------------------------------------------------
 
         await channel.send(
             interaction.user.mention,
             embed=embed,
             view=CloseTicketView(),
         )
+
+        # --------------------------------------------------
+        # SAVE TICKET
+        # --------------------------------------------------
 
         await create_ticket(
             channel.id,
@@ -178,7 +283,11 @@ class VerificationTicketView(BaseTicketView):
         emoji="🪪",
         custom_id="ticket_verification",
     )
-    async def button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         await self.create_ticket(interaction)
 
 
@@ -198,7 +307,11 @@ class ReportsTicketView(BaseTicketView):
         emoji="⚠️",
         custom_id="ticket_reports",
     )
-    async def button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         await self.create_ticket(interaction)
 
 
@@ -218,7 +331,11 @@ class ApplicationsTicketView(BaseTicketView):
         emoji="📝",
         custom_id="ticket_applications",
     )
-    async def button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         await self.create_ticket(interaction)
 
 
@@ -238,5 +355,9 @@ class ContactTicketView(BaseTicketView):
         emoji="💌",
         custom_id="ticket_contact",
     )
-    async def button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         await self.create_ticket(interaction)
