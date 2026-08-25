@@ -1,65 +1,286 @@
 # database/autothreads.py
+
 import asyncpg
+
 from database.database import db
 
-CREATE_TABLE_SQL = """
+
+# --------------------------------------------------
+# TABLE SETUP
+# --------------------------------------------------
+
+AUTOTHREADS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS autothreads (
     id SERIAL PRIMARY KEY,
     thread_id BIGINT NOT NULL,
+    guild_id BIGINT,
     parent_channel_id BIGINT NOT NULL,
     parent_message_id BIGINT,
-    thread_type BIGINT NOT NULL,
+    thread_type BIGINT NOT NULL DEFAULT 0,
     owner_id BIGINT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
+
+AUTOTHREAD_CONFIGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS autothread_configs (
+    id SERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    auto_archive_duration INTEGER NOT NULL DEFAULT 1440,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (guild_id, channel_id)
+);
+"""
+
+
 async def init_autothreads_table():
     """
-    Ensure the autothreads table exists. Call this once during startup
-    after db.connect() and before any restore calls.
+    Ensure all autothread tables and columns exist.
     """
-    async with db.pool.acquire() as conn:
-        await conn.execute(CREATE_TABLE_SQL)
 
-async def add_autothread(thread_id, parent_channel_id, parent_message_id, thread_type, owner_id=None):
+    if not db.pool:
+        raise RuntimeError(
+            "Database pool is not initialized. Call db.connect() first."
+        )
+
+    async with db.pool.acquire() as conn:
+
+        # Existing thread records
+        await conn.execute(AUTOTHREADS_TABLE_SQL)
+
+        # Add guild_id to older autothreads tables
+        await conn.execute(
+            """
+            ALTER TABLE autothreads
+            ADD COLUMN IF NOT EXISTS guild_id BIGINT
+            """
+        )
+
+        # Configured auto-thread channels
+        await conn.execute(AUTOTHREAD_CONFIGS_TABLE_SQL)
+
+
+# --------------------------------------------------
+# AUTO-THREAD CONFIGURATION
+# --------------------------------------------------
+
+async def add_autothread_config(
+    guild_id: int,
+    channel_id: int,
+    auto_archive_duration: int = 1440,
+):
+    """
+    Add or update a channel that should automatically
+    create threads when users post messages.
+    """
+
     async with db.pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO autothreads (thread_id, parent_channel_id, parent_message_id, thread_type, owner_id)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO autothread_configs (
+                guild_id,
+                channel_id,
+                auto_archive_duration
+            )
+            VALUES ($1, $2, $3)
+
+            ON CONFLICT (guild_id, channel_id)
+            DO UPDATE SET
+                auto_archive_duration =
+                    EXCLUDED.auto_archive_duration
+            """,
+            guild_id,
+            channel_id,
+            auto_archive_duration,
+        )
+
+
+async def get_autothread_configs(
+    guild_id: int | None = None,
+):
+    """
+    Get configured auto-thread channels.
+
+    If guild_id is supplied, only return that server's
+    configurations.
+    """
+
+    async with db.pool.acquire() as conn:
+
+        if guild_id is not None:
+            return await conn.fetch(
+                """
+                SELECT
+                    id,
+                    guild_id,
+                    channel_id,
+                    auto_archive_duration,
+                    created_at
+                FROM autothread_configs
+                WHERE guild_id = $1
+                ORDER BY id
+                """,
+                guild_id,
+            )
+
+        return await conn.fetch(
+            """
+            SELECT
+                id,
+                guild_id,
+                channel_id,
+                auto_archive_duration,
+                created_at
+            FROM autothread_configs
+            ORDER BY guild_id, id
+            """
+        )
+
+
+async def get_autothread_config(
+    guild_id: int,
+    channel_id: int,
+):
+    """
+    Get one auto-thread channel configuration.
+    """
+
+    async with db.pool.acquire() as conn:
+        return await conn.fetchrow(
+            """
+            SELECT
+                id,
+                guild_id,
+                channel_id,
+                auto_archive_duration,
+                created_at
+            FROM autothread_configs
+            WHERE guild_id = $1
+              AND channel_id = $2
+            """,
+            guild_id,
+            channel_id,
+        )
+
+
+async def remove_autothread_config(
+    guild_id: int,
+    channel_id: int,
+):
+    """
+    Stop a channel from automatically creating threads.
+    """
+
+    async with db.pool.acquire() as conn:
+        return await conn.execute(
+            """
+            DELETE FROM autothread_configs
+            WHERE guild_id = $1
+              AND channel_id = $2
+            """,
+            guild_id,
+            channel_id,
+        )
+
+
+# --------------------------------------------------
+# CREATED THREAD RECORDS
+# --------------------------------------------------
+
+async def add_autothread(
+    thread_id: int,
+    parent_channel_id: int,
+    parent_message_id: int | None,
+    thread_type: int = 0,
+    owner_id: int | None = None,
+    guild_id: int | None = None,
+):
+    """
+    Save an actual Discord thread that has been created.
+    """
+
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO autothreads (
+                thread_id,
+                guild_id,
+                parent_channel_id,
+                parent_message_id,
+                thread_type,
+                owner_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
             thread_id,
+            guild_id,
             parent_channel_id,
             parent_message_id,
             thread_type,
-            owner_id
+            owner_id,
         )
 
-async def get_all_autothreads():
+
+async def get_all_autothreads(
+    guild_id: int | None = None,
+):
     """
-    Return all autothreads rows. If the table doesn't exist yet,
-    return an empty list instead of raising.
+    Return actual created autothread records.
+
+    Existing bot.py code can continue calling this
+    without supplying guild_id.
     """
+
     async with db.pool.acquire() as conn:
         try:
-            rows = await conn.fetch(
+
+            if guild_id is not None:
+                return await conn.fetch(
+                    """
+                    SELECT
+                        thread_id,
+                        guild_id,
+                        parent_channel_id,
+                        parent_message_id,
+                        thread_type,
+                        owner_id
+                    FROM autothreads
+                    WHERE guild_id = $1
+                    """,
+                    guild_id,
+                )
+
+            return await conn.fetch(
                 """
-                SELECT thread_id, parent_channel_id, parent_message_id, thread_type, owner_id
+                SELECT
+                    thread_id,
+                    guild_id,
+                    parent_channel_id,
+                    parent_message_id,
+                    thread_type,
+                    owner_id
                 FROM autothreads
                 """
             )
-            return rows
+
         except asyncpg.exceptions.UndefinedTableError:
-            # Table not created yet — treat as empty
             return []
 
-async def remove_autothread(thread_id):
+
+async def remove_autothread(
+    thread_id: int,
+):
+    """
+    Remove a stored thread record.
+    """
+
     async with db.pool.acquire() as conn:
         await conn.execute(
             """
             DELETE FROM autothreads
             WHERE thread_id = $1
             """,
-            thread_id
+            thread_id,
         )
