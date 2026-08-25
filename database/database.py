@@ -134,30 +134,36 @@ class Database:
     # TICKET PANELS
     # --------------------------------------------------
 
-    async def add_ticket_panel(
+    async def create_ticket(
         self,
         guild_id: int,
         channel_id: int,
-        message_id: int,
-        panel_type: str,
+        owner_id: int,
+        ticket_type: str,
     ):
         await self.execute(
             """
-            INSERT INTO ticket_panels (
+            INSERT INTO tickets (
                 guild_id,
                 channel_id,
-                message_id,
-                panel_type
+                owner_id,
+                ticket_type,
+                closed
             )
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (message_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, FALSE)
+
+            ON CONFLICT (channel_id)
+            DO UPDATE SET
+                guild_id = EXCLUDED.guild_id,
+                owner_id = EXCLUDED.owner_id,
+                ticket_type = EXCLUDED.ticket_type,
+                closed = FALSEs
             """,
             guild_id,
             channel_id,
-            message_id,
-            panel_type,
+            owner_id,
+            ticket_type,
         )
-
     async def get_ticket_panels(self):
         return await self.fetch(
             """
