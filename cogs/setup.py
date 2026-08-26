@@ -8,8 +8,587 @@ from discord import app_commands
 from discord.ext import commands
 
 
+# ==================================================
+# AUTO ROLE PANEL
+# ==================================================
+
+class AutoRoleSelect(discord.ui.RoleSelect):
+
+    def __init__(
+        self,
+        cog,
+        owner_id: int,
+        guild_id: int,
+        mode: str,
+    ):
+        self.cog = cog
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.mode = mode
+
+        if mode == "add":
+            placeholder = "Choose roles to add as join auto roles"
+        else:
+            placeholder = "Choose saved auto roles to remove"
+
+        super().__init__(
+            placeholder=placeholder,
+            min_values=1,
+            max_values=25,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.owner_id:
+            return await interaction.response.send_message(
+                "❌ This Auto Roles picker isn't for you.",
+                ephemeral=True,
+            )
+
+        guild = interaction.guild
+
+        if (
+            guild is None
+            or guild.id != self.guild_id
+        ):
+            return await interaction.response.send_message(
+                "❌ I couldn't find this server.",
+                ephemeral=True,
+            )
+
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message(
+                "❌ You need Discord Administrator permission.",
+                ephemeral=True,
+            )
+
+        selected_roles = [
+            role
+            for role in self.values
+            if isinstance(
+                role,
+                discord.Role,
+            )
+        ]
+
+        if self.mode == "add":
+
+            allowed = []
+            skipped = []
+
+            settings = None
+
+            try:
+                settings = (
+                    await self.cog.bot.db
+                    .get_guild_settings(
+                        guild.id
+                    )
+                )
+            except Exception:
+                settings = None
+
+            protected_role_ids = set()
+
+            if settings:
+                for key in (
+                    "admin_role",
+                    "mod_role",
+                ):
+                    role_id = settings.get(
+                        key
+                    )
+
+                    if role_id:
+                        protected_role_ids.add(
+                            role_id
+                        )
+
+            bot_member = (
+                guild.me
+                or guild.get_member(
+                    self.cog.bot.user.id
+                )
+            )
+
+            for role in selected_roles:
+
+                if role == guild.default_role:
+                    skipped.append(
+                        f"{role.name} (@everyone)"
+                    )
+                    continue
+
+                if role.managed:
+                    skipped.append(
+                        f"{role.name} (managed role)"
+                    )
+                    continue
+
+                if (
+                    bot_member is None
+                    or role >= bot_member.top_role
+                ):
+                    skipped.append(
+                        f"{role.name} (above the bot)"
+                    )
+                    continue
+
+                if role.id in protected_role_ids:
+                    skipped.append(
+                        f"{role.name} (Admin/Mod role)"
+                    )
+                    continue
+
+                if role.permissions.administrator:
+                    skipped.append(
+                        f"{role.name} (Administrator role)"
+                    )
+                    continue
+
+                allowed.append(
+                    role.id
+                )
+
+            if allowed:
+                await self.cog._add_auto_role_ids(
+                    guild.id,
+                    allowed,
+                )
+
+            total = len(
+                await self.cog._get_auto_role_ids(
+                    guild.id
+                )
+            )
+
+            message = (
+                f"✅ Added **{len(allowed)}** Auto Role(s).\n"
+                f"📦 **{total}** total Auto Roles are now saved."
+            )
+
+            if skipped:
+                preview = ", ".join(
+                    skipped[:8]
+                )
+
+                if len(skipped) > 8:
+                    preview += (
+                        f", and {len(skipped) - 8} more"
+                    )
+
+                message += (
+                    "\n\n⚠️ Skipped: "
+                    + preview
+                )
+
+            await interaction.response.edit_message(
+                content=message,
+                view=None,
+            )
+
+            self.view.stop()
+            return
+
+        # --------------------------------------------------
+        # REMOVE MODE
+        # --------------------------------------------------
+
+        saved_ids = set(
+            await self.cog._get_auto_role_ids(
+                guild.id
+            )
+        )
+
+        remove_ids = [
+            role.id
+            for role in selected_roles
+            if role.id in saved_ids
+        ]
+
+        if remove_ids:
+            await self.cog._remove_auto_role_ids(
+                guild.id,
+                remove_ids,
+            )
+
+        total = len(
+            await self.cog._get_auto_role_ids(
+                guild.id
+            )
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"✅ Removed **{len(remove_ids)}** "
+                "Auto Role(s).\n"
+                f"📦 **{total}** Auto Roles remain."
+            ),
+            view=None,
+        )
+
+        self.view.stop()
+
+
+class AutoRoleSelectView(discord.ui.View):
+
+    def __init__(
+        self,
+        cog,
+        owner_id: int,
+        guild_id: int,
+        mode: str,
+    ):
+        super().__init__(
+            timeout=300
+        )
+
+        self.add_item(
+            AutoRoleSelect(
+                cog=cog,
+                owner_id=owner_id,
+                guild_id=guild_id,
+                mode=mode,
+            )
+        )
+
+
+class ClearAutoRolesConfirmView(discord.ui.View):
+
+    def __init__(
+        self,
+        cog,
+        owner_id: int,
+        guild_id: int,
+    ):
+        super().__init__(
+            timeout=120
+        )
+
+        self.cog = cog
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ This confirmation isn't for you.",
+                ephemeral=True,
+            )
+            return False
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need Discord Administrator permission.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Clear All Auto Roles",
+        emoji="🗑️",
+        style=discord.ButtonStyle.danger,
+    )
+    async def clear_all(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.cog._clear_auto_role_ids(
+            self.guild_id
+        )
+
+        self.stop()
+
+        await interaction.response.edit_message(
+            content="✅ All join Auto Roles have been cleared.",
+            view=None,
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        emoji="✖️",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.stop()
+
+        await interaction.response.edit_message(
+            content="✅ Nothing was changed.",
+            view=None,
+        )
+
+
+class AutoRolePanelView(discord.ui.View):
+
+    def __init__(
+        self,
+        cog,
+        owner_id: int,
+        guild_id: int,
+    ):
+        super().__init__(
+            timeout=600
+        )
+
+        self.cog = cog
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ This Auto Roles panel isn't for you.",
+                ephemeral=True,
+            )
+            return False
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need Discord Administrator permission.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
+    async def build_embed(
+        self,
+        guild: discord.Guild,
+    ):
+        role_ids = (
+            await self.cog._get_auto_role_ids(
+                guild.id
+            )
+        )
+
+        roles = []
+        missing = []
+
+        for role_id in role_ids:
+            role = guild.get_role(
+                role_id
+            )
+
+            if role:
+                roles.append(
+                    role
+                )
+            else:
+                missing.append(
+                    role_id
+                )
+
+        if roles:
+            shown = roles[:50]
+
+            description = "\n".join(
+                f"• {role.mention}"
+                for role in shown
+            )
+
+            if len(roles) > 50:
+                description += (
+                    f"\n• … and **{len(roles) - 50}** more"
+                )
+
+        else:
+            description = (
+                "No join Auto Roles are configured yet."
+            )
+
+        if missing:
+            description += (
+                f"\n\n⚠️ **{len(missing)}** saved role(s) "
+                "no longer exist and will be skipped."
+            )
+
+        embed = discord.Embed(
+            title="🎭 Join Auto Roles",
+            description=description,
+            colour=discord.Colour.blurple(),
+        )
+
+        embed.add_field(
+            name="Saved",
+            value=f"**{len(role_ids)}** role(s)",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="How it works",
+            value=(
+                "Every non-bot member who joins receives "
+                "all saved roles the bot is able to manage."
+            ),
+            inline=False,
+        )
+
+        embed.set_footer(
+            text=(
+                "Add up to 25 roles per selection. "
+                "Press Add Roles again to add more."
+            )
+        )
+
+        return embed
+
+    @discord.ui.button(
+        label="Add Roles",
+        emoji="➕",
+        style=discord.ButtonStyle.success,
+    )
+    async def add_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.send_message(
+            (
+                "🎭 **Add Join Auto Roles**\n\n"
+                "Select up to **25 roles** below. "
+                "You can repeat this as many times as needed."
+            ),
+            view=AutoRoleSelectView(
+                cog=self.cog,
+                owner_id=self.owner_id,
+                guild_id=self.guild_id,
+                mode="add",
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Remove Roles",
+        emoji="➖",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def remove_roles(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        role_ids = (
+            await self.cog._get_auto_role_ids(
+                self.guild_id
+            )
+        )
+
+        if not role_ids:
+            return await interaction.response.send_message(
+                "🌸 There are no Auto Roles to remove.",
+                ephemeral=True,
+            )
+
+        await interaction.response.send_message(
+            (
+                "🎭 **Remove Join Auto Roles**\n\n"
+                "Choose saved Auto Roles to remove. "
+                "Selecting a role that isn't saved does nothing."
+            ),
+            view=AutoRoleSelectView(
+                cog=self.cog,
+                owner_id=self.owner_id,
+                guild_id=self.guild_id,
+                mode="remove",
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Refresh",
+        emoji="🔄",
+        style=discord.ButtonStyle.primary,
+    )
+    async def refresh(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        guild = interaction.guild
+
+        if guild is None:
+            return await interaction.response.send_message(
+                "❌ I couldn't find this server.",
+                ephemeral=True,
+            )
+
+        await interaction.response.edit_message(
+            embed=(
+                await self.build_embed(
+                    guild
+                )
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="Clear All",
+        emoji="🗑️",
+        style=discord.ButtonStyle.danger,
+    )
+    async def clear_all(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.send_message(
+            (
+                "⚠️ **Clear every Join Auto Role?**\n\n"
+                "New members will stop receiving these roles."
+            ),
+            view=ClearAutoRolesConfirmView(
+                cog=self.cog,
+                owner_id=self.owner_id,
+                guild_id=self.guild_id,
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Close",
+        emoji="✖️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def close(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        self.stop()
+
+        await interaction.response.edit_message(
+            content="✅ Auto Roles panel closed.",
+            embed=None,
+            view=None,
+        )
+
+
+# ==================================================
+# SETUP COG
+# ==================================================
+
 class SetupCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+    ):
         self.bot = bot
 
     # ==================================================
@@ -24,40 +603,6 @@ class SetupCog(commands.Cog):
         )
 
         if (
-            db_obj
-            and callable(
-                getattr(
-                    db_obj,
-                    "execute",
-                    None,
-                )
-            )
-        ):
-            await db_obj.execute(
-                """
-                CREATE TABLE IF NOT EXISTS guild_auto_roles (
-                    guild_id BIGINT PRIMARY KEY,
-                    auto_role_1 BIGINT,
-                    auto_role_2 BIGINT,
-                    auto_role_3 BIGINT
-                )
-                """
-            )
-
-    async def _save_auto_roles(
-        self,
-        guild_id: int,
-        auto_role_1: discord.Role | None,
-        auto_role_2: discord.Role | None,
-        auto_role_3: discord.Role | None,
-    ):
-        db_obj = getattr(
-            self.bot,
-            "db",
-            None,
-        )
-
-        if (
             not db_obj
             or not callable(
                 getattr(
@@ -67,52 +612,104 @@ class SetupCog(commands.Cog):
                 )
             )
         ):
-            return False
+            return
 
-        role_ids = []
-
-        for role in (
-            auto_role_1,
-            auto_role_2,
-            auto_role_3,
-        ):
-            if (
-                role
-                and role.id not in role_ids
-            ):
-                role_ids.append(
-                    role.id
+        # This mirrors database.run_migrations so the panel is safe
+        # even if this cog is loaded independently during development.
+        await db_obj.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_auto_role_entries (
+                guild_id BIGINT NOT NULL,
+                role_id BIGINT NOT NULL,
+                PRIMARY KEY (
+                    guild_id,
+                    role_id
                 )
-
-        while len(role_ids) < 3:
-            role_ids.append(None)
+            )
+            """
+        )
 
         await db_obj.execute(
             """
-            INSERT INTO guild_auto_roles (
-                guild_id,
-                auto_role_1,
-                auto_role_2,
-                auto_role_3
-            )
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                auto_role_1 = EXCLUDED.auto_role_1,
-                auto_role_2 = EXCLUDED.auto_role_2,
-                auto_role_3 = EXCLUDED.auto_role_3
-            """,
-            guild_id,
-            role_ids[0],
-            role_ids[1],
-            role_ids[2],
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'guild_auto_roles'
+                      AND column_name = 'auto_role_1'
+                ) THEN
+                    INSERT INTO guild_auto_role_entries (
+                        guild_id,
+                        role_id
+                    )
+                    SELECT
+                        guild_id,
+                        roles.role_id
+                    FROM guild_auto_roles
+                    CROSS JOIN LATERAL UNNEST(
+                        ARRAY[
+                            auto_role_1,
+                            auto_role_2,
+                            auto_role_3
+                        ]
+                    ) AS roles(role_id)
+                    WHERE roles.role_id IS NOT NULL
+                    ON CONFLICT (
+                        guild_id,
+                        role_id
+                    )
+                    DO NOTHING;
+                END IF;
+            END
+            $$;
+            """
         )
-
-        return True
 
     async def _get_auto_role_ids(
         self,
         guild_id: int,
+    ) -> list[int]:
+
+        db_obj = getattr(
+            self.bot,
+            "db",
+            None,
+        )
+
+        if not db_obj:
+            return []
+
+        helper = getattr(
+            db_obj,
+            "get_guild_auto_roles",
+            None,
+        )
+
+        if callable(helper):
+            return await helper(
+                guild_id
+            )
+
+        rows = await db_obj.fetch(
+            """
+            SELECT role_id
+            FROM guild_auto_role_entries
+            WHERE guild_id = $1
+            ORDER BY role_id
+            """,
+            guild_id,
+        )
+
+        return [
+            row["role_id"]
+            for row in rows
+        ]
+
+    async def _add_auto_role_ids(
+        self,
+        guild_id: int,
+        role_ids: list[int],
     ):
         db_obj = getattr(
             self.bot,
@@ -120,51 +717,115 @@ class SetupCog(commands.Cog):
             None,
         )
 
-        if (
-            not db_obj
-            or not callable(
-                getattr(
-                    db_obj,
-                    "fetchrow",
-                    None,
-                )
-            )
-        ):
-            return []
+        if not db_obj:
+            return
 
-        row = await db_obj.fetchrow(
+        helper = getattr(
+            db_obj,
+            "add_guild_auto_roles",
+            None,
+        )
+
+        if callable(helper):
+            await helper(
+                guild_id,
+                role_ids,
+            )
+            return
+
+        await db_obj.execute(
             """
+            INSERT INTO guild_auto_role_entries (
+                guild_id,
+                role_id
+            )
             SELECT
-                auto_role_1,
-                auto_role_2,
-                auto_role_3
-            FROM guild_auto_roles
+                $1,
+                roles.role_id
+            FROM UNNEST(
+                $2::BIGINT[]
+            ) AS roles(role_id)
+            ON CONFLICT (
+                guild_id,
+                role_id
+            )
+            DO NOTHING
+            """,
+            guild_id,
+            role_ids,
+        )
+
+    async def _remove_auto_role_ids(
+        self,
+        guild_id: int,
+        role_ids: list[int],
+    ):
+        db_obj = getattr(
+            self.bot,
+            "db",
+            None,
+        )
+
+        if not db_obj:
+            return
+
+        helper = getattr(
+            db_obj,
+            "remove_guild_auto_roles",
+            None,
+        )
+
+        if callable(helper):
+            await helper(
+                guild_id,
+                role_ids,
+            )
+            return
+
+        await db_obj.execute(
+            """
+            DELETE FROM guild_auto_role_entries
+            WHERE guild_id = $1
+              AND role_id = ANY(
+                  $2::BIGINT[]
+              )
+            """,
+            guild_id,
+            role_ids,
+        )
+
+    async def _clear_auto_role_ids(
+        self,
+        guild_id: int,
+    ):
+        db_obj = getattr(
+            self.bot,
+            "db",
+            None,
+        )
+
+        if not db_obj:
+            return
+
+        helper = getattr(
+            db_obj,
+            "clear_guild_auto_roles",
+            None,
+        )
+
+        if callable(helper):
+            await helper(
+                guild_id
+            )
+            return
+
+        await db_obj.execute(
+            """
+            DELETE FROM guild_auto_role_entries
             WHERE guild_id = $1
             """,
             guild_id,
         )
-
-        if not row:
-            return []
-
-        role_ids = []
-
-        for key in (
-            "auto_role_1",
-            "auto_role_2",
-            "auto_role_3",
-        ):
-            role_id = row[key]
-
-            if (
-                role_id
-                and role_id not in role_ids
-            ):
-                role_ids.append(
-                    role_id
-                )
-
-        return role_ids
 
     # ==================================================
     # AUTO ROLES ON MEMBER JOIN
@@ -201,6 +862,7 @@ class SetupCog(commands.Cog):
             roles_to_add = []
 
             for role_id in role_ids:
+
                 role = member.guild.get_role(
                     role_id
                 )
@@ -214,10 +876,10 @@ class SetupCog(commands.Cog):
                 if role.managed:
                     continue
 
-                if (
-                    role
-                    >= bot_member.top_role
-                ):
+                if role >= bot_member.top_role:
+                    continue
+
+                if role.permissions.administrator:
                     continue
 
                 roles_to_add.append(
@@ -227,7 +889,7 @@ class SetupCog(commands.Cog):
             if roles_to_add:
                 await member.add_roles(
                     *roles_to_add,
-                    reason="Server setup auto roles",
+                    reason="Server setup join Auto Roles",
                 )
 
         except (
@@ -238,6 +900,10 @@ class SetupCog(commands.Cog):
 
         except Exception:
             traceback.print_exc()
+
+    # ==================================================
+    # /SETUP
+    # ==================================================
 
     @app_commands.command(
         name="setup",
@@ -251,18 +917,18 @@ class SetupCog(commands.Cog):
         admin_role="Role to treat as server admin",
         mod_role="Role for moderators and ticket staff",
         member_role="Role for normal/verified members",
-        auto_role_1="First role automatically given when someone joins",
-        auto_role_2="Second role automatically given when someone joins",
-        auto_role_3="Third role automatically given when someone joins",
-        clear_auto_roles="Clear all currently configured join auto roles",
         ticket_category="Category where ticket channels will be created",
         marriage_channel="Channel for marriage/relationships posts",
         enforce_only_post=(
             "If true, restrict posting to the selected marriage channel"
         ),
     )
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.default_permissions(
+        administrator=True
+    )
+    @app_commands.checks.has_permissions(
+        administrator=True
+    )
     async def setup_command(
         self,
         interaction: discord.Interaction,
@@ -270,36 +936,29 @@ class SetupCog(commands.Cog):
         admin_role: discord.Role | None = None,
         mod_role: discord.Role | None = None,
         member_role: discord.Role | None = None,
-        auto_role_1: discord.Role | None = None,
-        auto_role_2: discord.Role | None = None,
-        auto_role_3: discord.Role | None = None,
-        clear_auto_roles: bool = False,
         ticket_category: discord.CategoryChannel | None = None,
         marriage_channel: discord.TextChannel | None = None,
-        enforce_only_post: bool = True,
+        enforce_only_post: bool | None = None,
     ):
         await interaction.response.send_message(
             (
-                "🔧 Setup started — running in background. "
-                "Progress will be posted to the log channel if provided."
+                "🔧 Setup started — running in background.\n"
+                "When it finishes, the **Auto Roles panel** "
+                "will appear below."
             ),
             ephemeral=True,
         )
 
         self.bot.loop.create_task(
             self._run_setup_background(
-                interaction,
-                log_channel,
-                admin_role,
-                mod_role,
-                member_role,
-                auto_role_1,
-                auto_role_2,
-                auto_role_3,
-                clear_auto_roles,
-                ticket_category,
-                marriage_channel,
-                enforce_only_post,
+                interaction=interaction,
+                log_channel=log_channel,
+                admin_role=admin_role,
+                mod_role=mod_role,
+                member_role=member_role,
+                ticket_category=ticket_category,
+                marriage_channel=marriage_channel,
+                enforce_only_post=enforce_only_post,
             )
         )
 
@@ -310,35 +969,47 @@ class SetupCog(commands.Cog):
         admin_role: discord.Role | None,
         mod_role: discord.Role | None,
         member_role: discord.Role | None,
-        auto_role_1: discord.Role | None,
-        auto_role_2: discord.Role | None,
-        auto_role_3: discord.Role | None,
-        clear_auto_roles: bool,
         ticket_category: discord.CategoryChannel | None,
         marriage_channel: discord.TextChannel | None,
-        enforce_only_post: bool,
+        enforce_only_post: bool | None,
     ):
         try:
             await asyncio.wait_for(
                 self._do_setup_work(
-                    interaction,
-                    log_channel,
-                    admin_role,
-                    mod_role,
-                    member_role,
-                    auto_role_1,
-                    auto_role_2,
-                    auto_role_3,
-                    clear_auto_roles,
-                    ticket_category,
-                    marriage_channel,
-                    enforce_only_post,
+                    interaction=interaction,
+                    log_channel=log_channel,
+                    admin_role=admin_role,
+                    mod_role=mod_role,
+                    member_role=member_role,
+                    ticket_category=ticket_category,
+                    marriage_channel=marriage_channel,
+                    enforce_only_post=enforce_only_post,
                 ),
                 timeout=180.0,
             )
 
+            guild = interaction.guild
+
+            if guild is None:
+                return await interaction.followup.send(
+                    "✅ Setup completed successfully.",
+                    ephemeral=True,
+                )
+
+            panel = AutoRolePanelView(
+                cog=self,
+                owner_id=interaction.user.id,
+                guild_id=guild.id,
+            )
+
+            embed = await panel.build_embed(
+                guild
+            )
+
             await interaction.followup.send(
-                "✅ Setup completed successfully.",
+                "✅ **Setup completed successfully.**",
+                embed=embed,
+                view=panel,
                 ephemeral=True,
             )
 
@@ -366,92 +1037,120 @@ class SetupCog(commands.Cog):
         admin_role: discord.Role | None,
         mod_role: discord.Role | None,
         member_role: discord.Role | None,
-        auto_role_1: discord.Role | None,
-        auto_role_2: discord.Role | None,
-        auto_role_3: discord.Role | None,
-        clear_auto_roles: bool,
         ticket_category: discord.CategoryChannel | None,
         marriage_channel: discord.TextChannel | None,
-        enforce_only_post: bool,
+        enforce_only_post: bool | None,
     ):
-        # --------------------------------------------------
-        # HELPER - SETUP LOG
-        # --------------------------------------------------
-
-        async def log(msg: str):
+        async def log(
+            msg: str,
+        ):
             if log_channel:
                 try:
-                    await log_channel.send(msg)
+                    await log_channel.send(
+                        msg
+                    )
                 except Exception:
                     pass
 
-        await log("🔧 Setup: starting.")
-
-        # --------------------------------------------------
-        # DETERMINE GUILD CONTEXT
-        # --------------------------------------------------
+        await log(
+            "🔧 Setup: starting."
+        )
 
         guild = interaction.guild
 
         if guild is None:
-            if marriage_channel:
-                guild = marriage_channel.guild
-            elif log_channel:
-                guild = log_channel.guild
-            elif admin_role:
-                guild = admin_role.guild
-            elif mod_role:
-                guild = mod_role.guild
-            elif member_role:
-                guild = member_role.guild
-            elif auto_role_1:
-                guild = auto_role_1.guild
-            elif auto_role_2:
-                guild = auto_role_2.guild
-            elif auto_role_3:
-                guild = auto_role_3.guild
-
-        if guild is None:
-            guilds = list(self.bot.guilds)
-            guild = guilds[0] if guilds else None
-
-        if not guild:
             await log(
-                "⚠️ No guild context found; aborting role/channel operations."
+                "⚠️ No guild context found; aborting setup."
             )
             return
+
+        # --------------------------------------------------
+        # LOAD EXISTING SETTINGS
+        # --------------------------------------------------
+
+        existing_settings = None
+
+        try:
+            db_obj = getattr(
+                self.bot,
+                "db",
+                None,
+            )
+
+            if (
+                db_obj
+                and callable(
+                    getattr(
+                        db_obj,
+                        "get_guild_settings",
+                        None,
+                    )
+                )
+            ):
+                existing_settings = (
+                    await db_obj.get_guild_settings(
+                        guild.id
+                    )
+                )
+
+        except Exception:
+            traceback.print_exc()
 
         # --------------------------------------------------
         # ADMIN ROLE
         # --------------------------------------------------
 
         if admin_role is None:
-            admin_role = discord.utils.get(
-                guild.roles,
-                name="Admin",
-            )
 
-            if admin_role is None:
-                try:
-                    admin_role = await guild.create_role(
-                        name="Admin",
-                        reason="Setup: creating admin role",
+            if existing_settings:
+                saved_admin_id = (
+                    existing_settings.get(
+                        "admin_role"
                     )
+                )
 
-                    await log(
-                        "✅ Created role: Admin"
-                    )
-
-                except Exception:
-                    await log(
-                        (
-                            "⚠️ Failed to create Admin role "
-                            "(missing permissions)."
+                if saved_admin_id:
+                    admin_role = (
+                        guild.get_role(
+                            saved_admin_id
                         )
                     )
-        else:
+
+            if (
+                admin_role is None
+                and not existing_settings
+            ):
+                admin_role = discord.utils.get(
+                    guild.roles,
+                    name="Admin",
+                )
+
+                if admin_role is None:
+                    try:
+                        admin_role = (
+                            await guild.create_role(
+                                name="Admin",
+                                reason=(
+                                    "Setup: creating admin role"
+                                ),
+                            )
+                        )
+
+                        await log(
+                            "✅ Created role: Admin"
+                        )
+
+                    except Exception:
+                        await log(
+                            (
+                                "⚠️ Failed to create Admin role "
+                                "(missing permissions)."
+                            )
+                        )
+
+        if admin_role:
             await log(
-                f"✅ Admin role set to: {admin_role.name}"
+                f"✅ Admin role: {admin_role.name}"
             )
 
         # --------------------------------------------------
@@ -459,24 +1158,46 @@ class SetupCog(commands.Cog):
         # --------------------------------------------------
 
         if mod_role is None:
-            # Try common names, but do not create one automatically.
-            mod_role = (
-                discord.utils.get(guild.roles, name="Mod")
-                or discord.utils.get(guild.roles, name="Moderator")
-                or discord.utils.get(guild.roles, name="Staff")
-            )
 
-            if mod_role:
-                await log(
-                    f"✅ Mod role detected as: {mod_role.name}"
+            if existing_settings:
+                saved_mod_id = (
+                    existing_settings.get(
+                        "mod_role"
+                    )
+                    or existing_settings.get(
+                        "staff_role"
+                    )
                 )
-            else:
-                await log(
-                    "ℹ️ No mod role selected."
+
+                if saved_mod_id:
+                    mod_role = (
+                        guild.get_role(
+                            saved_mod_id
+                        )
+                    )
+
+            if (
+                mod_role is None
+                and not existing_settings
+            ):
+                mod_role = (
+                    discord.utils.get(
+                        guild.roles,
+                        name="Mod",
+                    )
+                    or discord.utils.get(
+                        guild.roles,
+                        name="Moderator",
+                    )
+                    or discord.utils.get(
+                        guild.roles,
+                        name="Staff",
+                    )
                 )
-        else:
+
+        if mod_role:
             await log(
-                f"✅ Mod role set to: {mod_role.name}"
+                f"✅ Mod role: {mod_role.name}"
             )
 
         # --------------------------------------------------
@@ -484,108 +1205,43 @@ class SetupCog(commands.Cog):
         # --------------------------------------------------
 
         if member_role is None:
-            member_role = (
-                discord.utils.get(guild.roles, name="Member")
-                or discord.utils.get(guild.roles, name="Members")
-                or discord.utils.get(guild.roles, name="Verified")
-            )
 
-            if member_role:
-                await log(
-                    f"✅ Member role detected as: {member_role.name}"
-                )
-            else:
-                await log(
-                    "ℹ️ No member role selected."
-                )
-        else:
-            await log(
-                f"✅ Member role set to: {member_role.name}"
-            )
-
-        # --------------------------------------------------
-        # AUTO ROLES
-        # --------------------------------------------------
-
-        if clear_auto_roles:
-            try:
-                saved = await self._save_auto_roles(
-                    guild.id,
-                    None,
-                    None,
-                    None,
-                )
-
-                if saved:
-                    await log(
-                        "✅ Cleared all join auto roles."
+            if existing_settings:
+                saved_member_id = (
+                    existing_settings.get(
+                        "member_role"
                     )
-                else:
-                    await log(
-                        "⚠️ Auto-role database helper is unavailable."
-                    )
-
-            except Exception:
-                traceback.print_exc()
-
-                await log(
-                    "⚠️ Failed to clear join auto roles."
                 )
 
-        elif any(
-            (
-                auto_role_1,
-                auto_role_2,
-                auto_role_3,
-            )
-        ):
-            try:
-                saved = await self._save_auto_roles(
-                    guild.id,
-                    auto_role_1,
-                    auto_role_2,
-                    auto_role_3,
-                )
-
-                if saved:
-                    selected_auto_roles = []
-
-                    for role in (
-                        auto_role_1,
-                        auto_role_2,
-                        auto_role_3,
-                    ):
-                        if (
-                            role
-                            and role.name
-                            not in selected_auto_roles
-                        ):
-                            selected_auto_roles.append(
-                                role.name
-                            )
-
-                    await log(
-                        "✅ Join auto roles set to: "
-                        + ", ".join(
-                            selected_auto_roles
+                if saved_member_id:
+                    member_role = (
+                        guild.get_role(
+                            saved_member_id
                         )
                     )
 
-                else:
-                    await log(
-                        "⚠️ Auto-role database helper is unavailable."
+            if (
+                member_role is None
+                and not existing_settings
+            ):
+                member_role = (
+                    discord.utils.get(
+                        guild.roles,
+                        name="Member",
                     )
-
-            except Exception:
-                traceback.print_exc()
-
-                await log(
-                    "⚠️ Failed to save join auto roles."
+                    or discord.utils.get(
+                        guild.roles,
+                        name="Members",
+                    )
+                    or discord.utils.get(
+                        guild.roles,
+                        name="Verified",
+                    )
                 )
 
-        else:
+        if member_role:
             await log(
-                "ℹ️ Join auto roles were left unchanged."
+                f"✅ Member role: {member_role.name}"
             )
 
         # --------------------------------------------------
@@ -594,46 +1250,66 @@ class SetupCog(commands.Cog):
 
         if marriage_channel is None:
             await log(
-                "ℹ️ No marriage/relationships channel provided."
+                (
+                    "ℹ️ Marriage/relationships channel "
+                    "left unchanged."
+                )
             )
 
         else:
             await log(
-                f"✅ Marriage channel set to: #{marriage_channel.name}"
+                (
+                    "✅ Marriage channel set to: "
+                    f"#{marriage_channel.name}"
+                )
             )
 
-            if enforce_only_post:
+            if enforce_only_post is True:
                 try:
-                    everyone = guild.default_role
-                    bot_member = guild.get_member(
-                        self.bot.user.id
+                    everyone = (
+                        guild.default_role
+                    )
+
+                    bot_member = (
+                        guild.me
+                        or guild.get_member(
+                            self.bot.user.id
+                        )
                     )
 
                     await marriage_channel.set_permissions(
                         everyone,
                         send_messages=False,
-                        reason="Setup: restrict marriage channel",
+                        reason=(
+                            "Setup: restrict marriage channel"
+                        ),
                     )
 
                     if admin_role:
                         await marriage_channel.set_permissions(
                             admin_role,
                             send_messages=True,
-                            reason="Setup: allow admin role to post",
+                            reason=(
+                                "Setup: allow admin role to post"
+                            ),
                         )
 
                     if mod_role:
                         await marriage_channel.set_permissions(
                             mod_role,
                             send_messages=True,
-                            reason="Setup: allow mod role to post",
+                            reason=(
+                                "Setup: allow mod role to post"
+                            ),
                         )
 
                     if bot_member:
                         await marriage_channel.set_permissions(
                             bot_member,
                             send_messages=True,
-                            reason="Setup: allow bot to post",
+                            reason=(
+                                "Setup: allow bot to post"
+                            ),
                         )
 
                     await log(
@@ -653,6 +1329,14 @@ class SetupCog(commands.Cog):
                             "Check bot permissions (Manage Channels)."
                         )
                     )
+
+            elif enforce_only_post is False:
+                await log(
+                    (
+                        "ℹ️ Marriage-channel posting restriction "
+                        "saved as disabled."
+                    )
+                )
 
         # --------------------------------------------------
         # SAVE SETTINGS TO DATABASE
@@ -712,7 +1396,9 @@ class SetupCog(commands.Cog):
                         if marriage_channel
                         else None
                     ),
-                    enforce_only_post=enforce_only_post,
+                    enforce_only_post=(
+                        enforce_only_post
+                    ),
                 )
 
                 await log(
@@ -739,7 +1425,9 @@ class SetupCog(commands.Cog):
         )
 
 
-async def setup(bot: commands.Bot):
+async def setup(
+    bot: commands.Bot,
+):
     await bot.add_cog(
         SetupCog(bot)
     )
