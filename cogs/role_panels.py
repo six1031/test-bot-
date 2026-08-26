@@ -1624,6 +1624,62 @@ class RolePanels(commands.Cog):
         self.bot = bot
 
     # ==================================================
+    # ADMIN ROLE CHECK
+    # ==================================================
+
+    async def is_admin(
+        self,
+        interaction: discord.Interaction,
+    ):
+        """
+        Allow:
+        - Discord Administrator permission
+        - configured Admin role from /setup
+        """
+
+        guild = interaction.guild
+
+        if guild is None:
+            return False
+
+        member = interaction.user
+
+        if not isinstance(
+            member,
+            discord.Member,
+        ):
+            return False
+
+        if member.guild_permissions.administrator:
+            return True
+
+        settings = await self.bot.db.get_guild_settings(
+            guild.id
+        )
+
+        if not settings:
+            return False
+
+        admin_role_id = settings.get(
+            "admin_role"
+        )
+
+        if not admin_role_id:
+            return False
+
+        admin_role = guild.get_role(
+            admin_role_id
+        )
+
+        if (
+            admin_role
+            and admin_role in member.roles
+        ):
+            return True
+
+        return False
+
+    # ==================================================
     # DATABASE + PERSISTENT VIEW RESTORE
     # ==================================================
 
@@ -1689,9 +1745,11 @@ class RolePanels(commands.Cog):
         interaction: discord.Interaction,
         channel: discord.TextChannel,
     ):
-        if not interaction.user.guild_permissions.administrator:
+        if not await self.is_admin(
+            interaction
+        ):
             return await interaction.response.send_message(
-                "❌ You need Administrator permission to create role panels.",
+                "❌ Only the configured **Admin role** can create role panels.",
                 ephemeral=True,
             )
 
@@ -1745,9 +1803,11 @@ class RolePanels(commands.Cog):
         interaction: discord.Interaction,
         panel_id: int,
     ):
-        if not interaction.user.guild_permissions.administrator:
+        if not await self.is_admin(
+            interaction
+        ):
             return await interaction.response.send_message(
-                "❌ You need Administrator permission to edit role panels.",
+                "❌ Only the configured **Admin role** can edit role panels.",
                 ephemeral=True,
             )
 
@@ -1799,9 +1859,11 @@ class RolePanels(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
-        if not interaction.user.guild_permissions.administrator:
+        if not await self.is_admin(
+            interaction
+        ):
             return await interaction.response.send_message(
-                "❌ You need Administrator permission to list role panels.",
+                "❌ Only the configured **Admin role** can list role panels.",
                 ephemeral=True,
             )
 
@@ -1873,9 +1935,11 @@ class RolePanels(commands.Cog):
         panel_id: int,
         delete_message: bool = True,
     ):
-        if not interaction.user.guild_permissions.administrator:
+        if not await self.is_admin(
+            interaction
+        ):
             return await interaction.response.send_message(
-                "❌ You need Administrator permission to delete role panels.",
+                "❌ Only the configured **Admin role** can delete role panels.",
                 ephemeral=True,
             )
 
