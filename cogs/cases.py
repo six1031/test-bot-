@@ -954,7 +954,12 @@ class Cases(
         return embed
 
     # ==================================================
-    # CASE THREAD / PANEL
+    # CASE PANEL
+    #
+    # One normal panel message per member is posted directly
+    # in the configured Staff Cases channel.
+    #
+    # No Discord threads are created.
     # ==================================================
 
     async def ensure_case(
@@ -998,7 +1003,45 @@ class Cases(
             member.id,
         )
 
-        thread = None
+        panel_message = None
+
+        # --------------------------------------------------
+        # EXISTING DIRECT PANEL
+        # --------------------------------------------------
+
+        if (
+            case
+            and case[
+                "panel_message_id"
+            ]
+            and not case[
+                "thread_id"
+            ]
+        ):
+            try:
+                panel_message = (
+                    await case_channel.fetch_message(
+                        case[
+                            "panel_message_id"
+                        ]
+                    )
+                )
+
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                panel_message = None
+
+        # --------------------------------------------------
+        # MIGRATE OLD THREAD-BASED CASES
+        #
+        # The previous cog stored the panel inside a thread.
+        # If one of those records exists, archive the old
+        # thread where possible and replace it with a normal
+        # panel message in the configured case channel.
+        # --------------------------------------------------
 
         if (
             case
@@ -1006,31 +1049,33 @@ class Cases(
                 "thread_id"
             ]
         ):
-            thread = guild.get_thread(
+            old_thread = guild.get_thread(
                 case[
                     "thread_id"
                 ]
             )
 
-            if thread is None:
-                fetched = self.bot.get_channel(
+            if old_thread is None:
+                cached = self.bot.get_channel(
                     case[
                         "thread_id"
                     ]
                 )
 
                 if isinstance(
-                    fetched,
+                    cached,
                     discord.Thread,
                 ):
-                    thread = fetched
+                    old_thread = cached
 
-        if thread is not None:
-            if thread.archived:
+            if old_thread is not None:
                 try:
-                    await thread.edit(
-                        archived=False,
-                        reason="Member case accessed",
+                    await old_thread.edit(
+                        archived=True,
+                        reason=(
+                            "Migrated member case from thread "
+                            "to direct Staff Cases panel"
+                        ),
                     )
 
                 except (
@@ -1041,99 +1086,35 @@ class Cases(
 
             panel_message = None
 
-            panel_message_id = (
-                case[
-                    "panel_message_id"
-                ]
-                if case
-                else None
-            )
+        # --------------------------------------------------
+        # CREATE THE MEMBER PANEL DIRECTLY IN THE SET CHANNEL
+        # --------------------------------------------------
 
-            if panel_message_id:
-                try:
-                    panel_message = (
-                        await thread.fetch_message(
-                            panel_message_id
-                        )
+        if panel_message is None:
+            panel_message = await case_channel.send(
+                embed=(
+                    await self.build_case_embed(
+                        guild,
+                        member.id,
                     )
-
-                except (
-                    discord.NotFound,
-                    discord.Forbidden,
-                    discord.HTTPException,
-                ):
-                    panel_message = None
-
-            if panel_message is None:
-                panel_message = await thread.send(
-                    embed=(
-                        await self.build_case_embed(
-                            guild,
-                            member.id,
-                        )
-                    ),
-                    view=CasePanelView(
-                        cog=self,
-                        guild_id=guild.id,
-                        member_id=member.id,
-                    ),
-                )
-
-                await save_member_case(
+                ),
+                view=CasePanelView(
+                    cog=self,
                     guild_id=guild.id,
                     member_id=member.id,
-                    thread_id=thread.id,
-                    panel_message_id=panel_message.id,
-                )
-
-            return (
-                thread,
-                panel_message,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
             )
 
-        if case:
-            await delete_member_case_location(
-                guild.id,
-                member.id,
-            )
-
-        # Public threads inside a private staff channel inherit
-        # the channel's visibility, so staff can access them
-        # without individually inviting every moderator.
-        thread = await case_channel.create_thread(
-            name=safe_thread_name(
-                member
-            ),
-            type=discord.ChannelType.public_thread,
-            auto_archive_duration=1440,
-            reason=(
-                f"Staff case created for {member} ({member.id})"
-            ),
-        )
-
-        panel_message = await thread.send(
-            embed=(
-                await self.build_case_embed(
-                    guild,
-                    member.id,
-                )
-            ),
-            view=CasePanelView(
-                cog=self,
+            await save_member_case(
                 guild_id=guild.id,
                 member_id=member.id,
-            ),
-        )
-
-        await save_member_case(
-            guild_id=guild.id,
-            member_id=member.id,
-            thread_id=thread.id,
-            panel_message_id=panel_message.id,
-        )
+                thread_id=None,
+                panel_message_id=panel_message.id,
+            )
 
         return (
-            thread,
+            case_channel,
             panel_message,
         )
 
@@ -1147,34 +1128,55 @@ class Cases(
             member_id,
         )
 
-        if not case:
+        if (
+            not case
+            or not case[
+                "panel_message_id"
+            ]
+        ):
             return
 
-        thread = guild.get_thread(
-            case[
-                "thread_id"
-            ]
+        settings = await get_case_settings(
+            guild.id
         )
 
-        if thread is None:
-            fetched = self.bot.get_channel(
-                case[
-                    "thread_id"
-                ]
+        case_channel_id = settings.get(
+            "case_channel_id"
+        )
+
+        if not case_channel_id:
+            return
+
+        case_channel = guild.get_channel(
+            case_channel_id
+        )
+
+        if not isinstance(
+            case_channel,
+            discord.TextChannel,
+        ):
+            return
+
+        # Old thread-based records are migrated the next time
+        # /case, /warn, or /note touches that member.
+        if case[
+            "thread_id"
+        ]:
+            member = guild.get_member(
+                member_id
             )
 
-            if isinstance(
-                fetched,
-                discord.Thread,
-            ):
-                thread = fetched
+            if member is not None:
+                await self.ensure_case(
+                    guild,
+                    member,
+                )
 
-        if thread is None:
             return
 
         try:
             panel_message = (
-                await thread.fetch_message(
+                await case_channel.fetch_message(
                     case[
                         "panel_message_id"
                     ]
@@ -1200,6 +1202,7 @@ class Cases(
                 guild_id=guild.id,
                 member_id=member_id,
             ),
+            allowed_mentions=discord.AllowedMentions.none(),
         )
 
     async def post_case_entry(
@@ -1208,32 +1211,12 @@ class Cases(
         member: discord.Member,
         entry,
     ):
-        thread, _ = await self.ensure_case(
+        # Make sure the member has one panel in the configured
+        # Staff Cases channel, then refresh it with the newest
+        # warning / note information.
+        await self.ensure_case(
             guild,
             member,
-        )
-
-        status = ""
-
-        if not entry[
-            "active"
-        ]:
-            status = "\n**Status:** Cleared / inactive"
-
-        await thread.send(
-            (
-                f"**#{entry['id']} • "
-                f"{entry_label(entry['entry_type'])}**\n"
-                f"**Member:** {member.mention}\n"
-                f"**By:** <@{entry['staff_id']}>\n"
-                f"**Details:** {entry['content']}"
-                f"{status}"
-            ),
-            allowed_mentions=discord.AllowedMentions(
-                users=False,
-                roles=False,
-                everyone=False,
-            ),
         )
 
         await self.refresh_case_panel(
@@ -1342,23 +1325,9 @@ class Cases(
 
         if member:
             try:
-                thread, _ = await self.ensure_case(
+                await self.ensure_case(
                     guild,
                     member,
-                )
-
-                await thread.send(
-                    (
-                        f"🧹 **Warning #{warning_id} cleared**\n"
-                        f"**By:** {staff.mention}\n"
-                        f"**Original warning:** "
-                        f"{trim_text(cleared['content'], 1000)}"
-                    ),
-                    allowed_mentions=discord.AllowedMentions(
-                        users=False,
-                        roles=False,
-                        everyone=False,
-                    ),
                 )
 
             except Exception:
@@ -1379,10 +1348,10 @@ class Cases(
 
     @app_commands.command(
         name="casesetup",
-        description="Set the private staff channel used for member case threads.",
+        description="Set the private staff channel used for member case panels.",
     )
     @app_commands.describe(
-        channel="Private staff channel where member case threads should be created.",
+        channel="Private staff channel where member case panels should be posted.",
     )
     @app_commands.default_permissions(
         administrator=True
@@ -1430,16 +1399,6 @@ class Cases(
         if not permissions.send_messages:
             needed.append(
                 "Send Messages"
-            )
-
-        if not permissions.create_public_threads:
-            needed.append(
-                "Create Public Threads"
-            )
-
-        if not permissions.send_messages_in_threads:
-            needed.append(
-                "Send Messages in Threads"
             )
 
         if not permissions.embed_links:
@@ -1519,7 +1478,7 @@ class Cases(
         )
 
         try:
-            thread, _ = await self.ensure_case(
+            _, panel_message = await self.ensure_case(
                 interaction.guild,
                 member,
             )
@@ -1534,8 +1493,8 @@ class Cases(
 
         await interaction.followup.send(
             (
-                f"🛡️ {member.mention}'s case: "
-                f"<#{thread.id}>"
+                f"🛡️ {member.mention}'s case panel:\n"
+                f"{panel_message.jump_url}"
             ),
             ephemeral=True,
         )
