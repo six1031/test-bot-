@@ -125,6 +125,67 @@ class AutothreadCog(commands.Cog):
         self.bot = bot
 
     # ==================================================
+    # ADMIN ROLE CHECK
+    # ==================================================
+
+    async def is_admin(
+        self,
+        interaction: discord.Interaction,
+    ):
+        """
+        Allow:
+        - Discord Administrator permission
+        - configured Admin role from /setup
+        """
+
+        guild = interaction.guild
+
+        if guild is None:
+            return False
+
+        member = interaction.user
+
+        if not isinstance(
+            member,
+            discord.Member,
+        ):
+            return False
+
+        # Real Discord Administrator permission
+        if member.guild_permissions.administrator:
+            return True
+
+        # --------------------------------------------------
+        # CONFIGURED ADMIN ROLE
+        # --------------------------------------------------
+
+        settings = await self.bot.db.get_guild_settings(
+            guild.id
+        )
+
+        if not settings:
+            return False
+
+        admin_role_id = settings.get(
+            "admin_role"
+        )
+
+        if not admin_role_id:
+            return False
+
+        admin_role = guild.get_role(
+            admin_role_id
+        )
+
+        if (
+            admin_role
+            and admin_role in member.roles
+        ):
+            return True
+
+        return False
+
+    # ==================================================
     # /AUTOTHREADSETUP
     # ==================================================
 
@@ -179,9 +240,6 @@ class AutothreadCog(commands.Cog):
             ),
         ],
     )
-    @app_commands.checks.has_permissions(
-        administrator=True
-    )
     async def autothreadsetup(
         self,
         interaction: discord.Interaction,
@@ -195,8 +253,26 @@ class AutothreadCog(commands.Cog):
         guild = interaction.guild
 
         if guild is None:
+
             return await interaction.response.send_message(
                 "❌ This command can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        # ==================================================
+        # ADMIN ONLY
+        # ==================================================
+
+        if not await self.is_admin(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ Only the configured "
+                    "**Admin role** can use "
+                    "`/autothreadsetup`."
+                ),
                 ephemeral=True,
             )
 
@@ -211,6 +287,7 @@ class AutothreadCog(commands.Cog):
             )
 
             if not rows:
+
                 return await interaction.response.send_message(
                     (
                         "❌ No autothread channels are "
@@ -593,6 +670,7 @@ class AutothreadCog(commands.Cog):
 async def setup(
     bot: commands.Bot,
 ):
+
     await bot.add_cog(
         AutothreadCog(bot)
     )
