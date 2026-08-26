@@ -280,6 +280,20 @@ class Database:
 
         await self.execute(
             """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS verification_channel BIGINT
+            """
+        )
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS verification_message TEXT
+            """
+        )
+
+        await self.execute(
+            """
             CREATE TABLE IF NOT EXISTS guild_auto_role_entries (
                 guild_id BIGINT NOT NULL,
                 role_id BIGINT NOT NULL,
@@ -945,7 +959,11 @@ class Database:
 
                     intro_channel,
 
-                    enforce_only_post
+                    enforce_only_post,
+
+                    verification_channel,
+
+                    verification_message
 
                 FROM guild_settings
 
@@ -1021,6 +1039,12 @@ class Database:
                     bool(
                         row["enforce_only_post"]
                     ),
+
+                "verification_channel":
+                    row["verification_channel"],
+
+                "verification_message":
+                    row["verification_message"],
 
                 "auto_roles":
                     auto_role_ids,
@@ -1226,6 +1250,60 @@ class Database:
                 enforce_only_post,
             )
 
+
+    # ==================================================
+    # VERIFICATION SETTINGS
+    # ==================================================
+
+    async def set_verified_role(
+        self,
+        guild_id: int,
+        role_id: int,
+    ):
+        await self.upsert_guild_settings(
+            guild_id=guild_id,
+            verified_role_id=role_id,
+        )
+
+    async def set_verification_channel(
+        self,
+        guild_id: int,
+        channel_id: int | None,
+    ):
+        await self.execute(
+            """
+            INSERT INTO guild_settings (
+                guild_id,
+                verification_channel
+            )
+            VALUES ($1, $2)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                verification_channel = EXCLUDED.verification_channel
+            """,
+            guild_id,
+            channel_id,
+        )
+
+    async def set_verification_message(
+        self,
+        guild_id: int,
+        message: str | None,
+    ):
+        await self.execute(
+            """
+            INSERT INTO guild_settings (
+                guild_id,
+                verification_message
+            )
+            VALUES ($1, $2)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                verification_message = EXCLUDED.verification_message
+            """,
+            guild_id,
+            message,
+        )
 
     # ==================================================
     # GUILD AUTO ROLES
