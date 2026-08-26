@@ -106,6 +106,441 @@ async def is_ticket_staff(
     )
 
 
+
+# ==================================================
+# VERIFICATION QUESTION PANEL
+# ==================================================
+
+VERIFICATION_QUESTIONS = {
+    1: (
+        "Age",
+        "How old are you right now?",
+    ),
+    2: (
+        "Why Join?",
+        "What brings you to our Little Space community?",
+    ),
+    3: (
+        "Community Role",
+        "Are you joining as a regressor, caregiver, or supporter?",
+    ),
+    4: (
+        "Server Rule",
+        "Pick one server rule and explain it in your own words.",
+    ),
+    5: (
+        "Online Safety",
+        "Tell us one way you keep yourself safe online.",
+    ),
+    6: (
+        "Boundaries",
+        "What are your personal boundaries or things you're not comfy with?",
+    ),
+    7: (
+        "Interaction",
+        "How do you prefer people to interact with you in the server?",
+    ),
+    8: (
+        "Staff Info",
+        "Is there anything else staff should know about you?",
+    ),
+    9: (
+        "SFW / NSFW",
+        "In your own words, do you see age regression as NSFW or SFW?",
+    ),
+}
+
+
+def get_ticket_owner_id(
+    channel,
+) -> int | None:
+    """
+    Ticket topics are stored as:
+        ticket_type:user_id
+    """
+
+    topic = getattr(
+        channel,
+        "topic",
+        None,
+    )
+
+    if not topic or ":" not in topic:
+        return None
+
+    try:
+        return int(
+            topic.rsplit(
+                ":",
+                1,
+            )[1]
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+async def verification_owner_check(
+    interaction: discord.Interaction,
+) -> bool:
+    owner_id = get_ticket_owner_id(
+        interaction.channel
+    )
+
+    if owner_id is None:
+        await interaction.response.send_message(
+            "❌ I couldn't identify the owner of this verification ticket.",
+            ephemeral=True,
+        )
+        return False
+
+    if interaction.user.id != owner_id:
+        await interaction.response.send_message(
+            "❌ Only the person who opened this verification ticket can answer these questions.",
+            ephemeral=True,
+        )
+        return False
+
+    return True
+
+
+class VerificationAnswerModal(
+    discord.ui.Modal
+):
+
+    def __init__(
+        self,
+        question_number: int,
+        short_label: str,
+        question_text: str,
+    ):
+        super().__init__(
+            title=(
+                f"Verification • Question "
+                f"{question_number}"
+            )
+        )
+
+        self.question_number = (
+            question_number
+        )
+
+        self.short_label = (
+            short_label
+        )
+
+        self.question_text = (
+            question_text
+        )
+
+        self.answer = discord.ui.TextInput(
+            label=short_label[:45],
+            placeholder=question_text[:100],
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=2000,
+        )
+
+        self.add_item(
+            self.answer
+        )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
+        owner_id = get_ticket_owner_id(
+            interaction.channel
+        )
+
+        if (
+            owner_id is None
+            or interaction.user.id != owner_id
+        ):
+            return await interaction.response.send_message(
+                "❌ Only the ticket owner can submit verification answers.",
+                ephemeral=True,
+            )
+
+        answer_text = str(
+            self.answer.value
+        ).strip()
+
+        embed = discord.Embed(
+            title=(
+                f"📝 Question "
+                f"{self.question_number} — "
+                f"{self.short_label}"
+            ),
+            description=(
+                f"**Question**\n"
+                f"{self.question_text}\n\n"
+                f"**Answer**\n"
+                f"{answer_text}"
+            ),
+            colour=discord.Colour.blurple(),
+        )
+
+        embed.set_author(
+            name=str(
+                interaction.user
+            ),
+            icon_url=(
+                interaction.user.display_avatar.url
+            ),
+        )
+
+        embed.set_footer(
+            text=(
+                f"Submitted by user ID "
+                f"{interaction.user.id}"
+            )
+        )
+
+        try:
+            await interaction.channel.send(
+                embed=embed,
+                allowed_mentions=(
+                    discord.AllowedMentions.none()
+                ),
+            )
+
+        except (
+            discord.Forbidden,
+            discord.HTTPException,
+        ):
+            traceback.print_exc()
+
+            return await interaction.response.send_message(
+                "❌ I couldn't post your answer into the ticket.",
+                ephemeral=True,
+            )
+
+        await interaction.response.send_message(
+            (
+                f"✅ Question "
+                f"{self.question_number} submitted."
+            ),
+            ephemeral=True,
+        )
+
+
+class VerificationQuestionButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        question_number: int,
+        short_label: str,
+        question_text: str,
+    ):
+        row = (
+            0
+            if question_number <= 5
+            else 1
+        )
+
+        super().__init__(
+            label=(
+                f"{question_number} • "
+                f"{short_label}"
+            ),
+            style=discord.ButtonStyle.primary,
+            custom_id=(
+                f"verification_question_"
+                f"{question_number}"
+            ),
+            row=row,
+        )
+
+        self.question_number = (
+            question_number
+        )
+
+        self.short_label = (
+            short_label
+        )
+
+        self.question_text = (
+            question_text
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if not await verification_owner_check(
+            interaction
+        ):
+            return
+
+        await interaction.response.send_modal(
+            VerificationAnswerModal(
+                question_number=(
+                    self.question_number
+                ),
+                short_label=(
+                    self.short_label
+                ),
+                question_text=(
+                    self.question_text
+                ),
+            )
+        )
+
+
+class VerificationQuestionPanelView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+    ):
+        super().__init__(
+            timeout=None
+        )
+
+        for (
+            question_number,
+            (
+                short_label,
+                question_text,
+            ),
+        ) in VERIFICATION_QUESTIONS.items():
+
+            self.add_item(
+                VerificationQuestionButton(
+                    question_number=(
+                        question_number
+                    ),
+                    short_label=(
+                        short_label
+                    ),
+                    question_text=(
+                        question_text
+                    ),
+                )
+            )
+
+    @discord.ui.button(
+        label="ID Check",
+        emoji="🪪",
+        style=discord.ButtonStyle.secondary,
+        custom_id="verification_id_check",
+        row=2,
+    )
+    async def id_check(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if not await verification_owner_check(
+            interaction
+        ):
+            return
+
+        await interaction.response.send_message(
+            (
+                "🪪 **ID Check**\n\n"
+                "Please upload your ID **directly into this ticket**.\n\n"
+                "You may cover everything except:\n"
+                "• your **date of birth**\n"
+                "• your **photo**\n\n"
+                "Your ID is only being requested for age verification."
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Finished",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="verification_finished",
+        row=2,
+    )
+    async def finished(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if not await verification_owner_check(
+            interaction
+        ):
+            return
+
+        guild = interaction.guild
+
+        try:
+            (
+                _,
+                admin_role,
+                mod_role,
+            ) = await get_ticket_roles(
+                interaction.client,
+                guild,
+            )
+
+        except Exception:
+            traceback.print_exc()
+
+            return await interaction.response.send_message(
+                "❌ I couldn't load the Admin and Mod roles.",
+                ephemeral=True,
+            )
+
+        staff_mentions = []
+
+        for role in (
+            admin_role,
+            mod_role,
+        ):
+            if (
+                role
+                and role.id
+                not in {
+                    r.id
+                    for r in staff_mentions
+                }
+            ):
+                staff_mentions.append(
+                    role
+                )
+
+        mention_text = " ".join(
+            role.mention
+            for role in staff_mentions
+        )
+
+        if not mention_text:
+            mention_text = (
+                "**Staff**"
+            )
+
+        await interaction.response.send_message(
+            "✅ Your verification has been marked as finished.",
+            ephemeral=True,
+        )
+
+        await interaction.channel.send(
+            (
+                "✅ **VERIFICATION READY FOR REVIEW**\n\n"
+                f"{interaction.user.mention} has finished "
+                "their verification questions.\n\n"
+                f"{mention_text} — please review their "
+                "answers and ID upload."
+            ),
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=True,
+                everyone=False,
+            ),
+        )
+
+
 # ==================================================
 # CLOSE BUTTON
 # ==================================================
@@ -469,31 +904,14 @@ class BaseTicketView(
         )
 
         if self.ticket_type == "verification":
+            embed.title = "🪪 Verification"
             embed.description = (
-                "Hi there — thank you for opening a verification ticket with us.\n"
-                "To keep our community safe and comfy, we need you to answer a "
-                "few questions and complete a quick age check.\n"
-                "You may cover everything on your ID except your date of birth "
-                "and your photo.\n"
-                "Please answer all questions clearly so staff can verify you "
-                "properly.\n\n"
-
-                "**Verification Questions:**\n"
-                "1. How old are you right now?\n"
-                "2. What brings you to our Little Space community?\n"
-                "3. Are you joining as a regressor, caregiver, or supporter?\n"
-                "4. Pick one server rule and explain it in your own words.\n"
-                "5. Tell us one way you keep yourself safe online.\n"
-                "6. What are your personal boundaries or things you’re not comfy with?\n"
-                "7. How do you prefer people to interact with you in the server?\n"
-                "8. Is there anything else staff should know about you?\n"
-                "9. In your own words, do you see age regression as NSFW or SFW?\n\n"
-
-                "**ID Requirement:**\n"
-                "Please upload a photo of your ID with everything covered except "
-                "your date of birth and your photo.\n"
-                "This is only used for age verification and will never be shared "
-                "outside staff."
+                "Welcome! Please complete each section below.\n\n"
+                "Click a question button, type your answer, and submit it. "
+                "Your answer will be posted into this private ticket for staff to review.\n\n"
+                "When you have answered all **9 questions** and uploaded your ID, "
+                "press **✅ Finished** to notify the Mod and Admin roles.\n\n"
+                "You can click a question again if you need to correct an answer."
             )
 
         elif self.ticket_type == "reports":
@@ -517,16 +935,35 @@ class BaseTicketView(
             )
 
         try:
-            await channel.send(
-                opener.mention,
-                embed=embed,
-                view=CloseTicketView(),
-                allowed_mentions=discord.AllowedMentions(
-                    users=True,
-                    roles=False,
-                    everyone=False,
-                ),
-            )
+            if self.ticket_type == "verification":
+                await channel.send(
+                    opener.mention,
+                    embed=embed,
+                    view=VerificationQuestionPanelView(),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True,
+                        roles=False,
+                        everyone=False,
+                    ),
+                )
+
+                await channel.send(
+                    "🔒 **Staff ticket controls**",
+                    view=CloseTicketView(),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+
+            else:
+                await channel.send(
+                    opener.mention,
+                    embed=embed,
+                    view=CloseTicketView(),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True,
+                        roles=False,
+                        everyone=False,
+                    ),
+                )
 
             await create_ticket(
                 guild.id,
@@ -694,6 +1131,10 @@ class Tickets(
 
         self.bot.add_view(
             VerificationTicketView()
+        )
+
+        self.bot.add_view(
+            VerificationQuestionPanelView()
         )
 
         self.bot.add_view(
