@@ -105,24 +105,29 @@ class Verification(
 
     # ==================================================
     # /VERIFY
+    # Admin + Mod command
     # ==================================================
 
     @app_commands.command(
         name="verify",
-        description="Give yourself the server's configured Verified role.",
+        description="Verify a member and give them the configured Verified role.",
+    )
+    @app_commands.describe(
+        member="The member you want to verify.",
     )
     @app_commands.guild_only()
     async def verify(
         self,
         interaction: discord.Interaction,
+        member: discord.Member,
     ):
         guild = interaction.guild
-        member = interaction.user
+        staff_member = interaction.user
 
         if (
             guild is None
             or not isinstance(
-                member,
+                staff_member,
                 discord.Member,
             )
         ):
@@ -144,6 +149,45 @@ class Verification(
                 ephemeral=True,
             )
 
+        # Native Discord Administrator always counts as Admin.
+        is_native_admin = (
+            staff_member.guild_permissions.administrator
+        )
+
+        admin_role_id = settings.get(
+            "admin_role"
+        )
+
+        mod_role_id = (
+            settings.get("mod_role")
+            or settings.get("staff_role")
+        )
+
+        staff_role_ids = {
+            role.id
+            for role in staff_member.roles
+        }
+
+        is_configured_staff = bool(
+            (
+                admin_role_id
+                and admin_role_id in staff_role_ids
+            )
+            or (
+                mod_role_id
+                and mod_role_id in staff_role_ids
+            )
+        )
+
+        if not (
+            is_native_admin
+            or is_configured_staff
+        ):
+            return await interaction.response.send_message(
+                "❌ Only the configured Admin or Mod role can use `/verify`.",
+                ephemeral=True,
+            )
+
         verified_role_id = settings.get(
             "verified_role"
         )
@@ -152,7 +196,7 @@ class Verification(
             return await interaction.response.send_message(
                 (
                     "❌ No Verified role has been configured.\n"
-                    "Ask an admin to open `/config` → **Verification**."
+                    "Use `/config` → **Verification** first."
                 ),
                 ephemeral=True,
             )
@@ -167,9 +211,15 @@ class Verification(
                 ephemeral=True,
             )
 
+        if member.bot:
+            return await interaction.response.send_message(
+                "❌ Bots cannot be verified.",
+                ephemeral=True,
+            )
+
         if role in member.roles:
             return await interaction.response.send_message(
-                f"✅ You already have {role.mention}.",
+                f"✅ {member.mention} is already verified.",
                 ephemeral=True,
             )
 
@@ -183,7 +233,7 @@ class Verification(
             return await interaction.response.send_message(
                 (
                     "❌ The configured Verified role has Administrator "
-                    "permission, so I will not self-assign it."
+                    "permission, so I will not assign it."
                 ),
                 ephemeral=True,
             )
@@ -192,8 +242,9 @@ class Verification(
             "admin_role"
         )
 
-        settings_mod_role = settings.get(
-            "mod_role"
+        settings_mod_role = (
+            settings.get("mod_role")
+            or settings.get("staff_role")
         )
 
         if role.id in {
@@ -203,7 +254,7 @@ class Verification(
             return await interaction.response.send_message(
                 (
                     "❌ The Verified role is currently also configured "
-                    "as an Admin/Mod role, so I will not self-assign it."
+                    "as an Admin/Mod role, so I will not assign it."
                 ),
                 ephemeral=True,
             )
@@ -230,12 +281,15 @@ class Verification(
         try:
             await member.add_roles(
                 role,
-                reason="Member used /verify",
+                reason=(
+                    f"Verified by {staff_member} "
+                    f"({staff_member.id}) using /verify"
+                ),
             )
 
         except discord.Forbidden:
             return await interaction.response.send_message(
-                "❌ I don't have permission to give you the Verified role.",
+                "❌ I don't have permission to give that member the Verified role.",
                 ephemeral=True,
             )
 
@@ -248,7 +302,7 @@ class Verification(
             )
 
         await interaction.response.send_message(
-            f"✅ You're verified! I added {role.mention}.",
+            f"✅ {member.mention} has been verified and given {role.mention}.",
             ephemeral=True,
         )
 
