@@ -2563,6 +2563,97 @@ class Alters(
         self.bot = bot
 
     # ==================================================
+    # PERMISSION HELPERS
+    # ==================================================
+
+    async def get_server_roles(
+        self,
+        guild: discord.Guild,
+    ):
+
+        settings = (
+            await self.bot.db
+            .get_guild_settings(
+                guild.id
+            )
+        )
+
+        if not settings:
+            return None, None, None
+
+        admin_role_id = settings.get(
+            "admin_role"
+        )
+
+        mod_role_id = (
+            settings.get("mod_role")
+            or settings.get("staff_role")
+        )
+
+        member_role_id = settings.get(
+            "member_role"
+        )
+
+        admin_role = (
+            guild.get_role(admin_role_id)
+            if admin_role_id
+            else None
+        )
+
+        mod_role = (
+            guild.get_role(mod_role_id)
+            if mod_role_id
+            else None
+        )
+
+        member_role = (
+            guild.get_role(member_role_id)
+            if member_role_id
+            else None
+        )
+
+        return (
+            admin_role,
+            mod_role,
+            member_role,
+        )
+
+    async def has_member_access(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        guild = interaction.guild
+        member = interaction.user
+
+        if (
+            guild is None
+            or not isinstance(
+                member,
+                discord.Member,
+            )
+        ):
+            return False
+
+        if member.guild_permissions.administrator:
+            return True
+
+        admin_role, mod_role, member_role = (
+            await self.get_server_roles(
+                guild
+            )
+        )
+
+        return any(
+            role and role in member.roles
+            for role in (
+                admin_role,
+                mod_role,
+                member_role,
+            )
+        )
+
+    # ==================================================
     # RESTORE BROWSE BUTTONS AFTER REDEPLOY
     # ==================================================
 
@@ -2649,6 +2740,22 @@ class Alters(
         interaction: discord.Interaction,
     ):
 
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use alter profiles."
+                ),
+                ephemeral=True,
+            )
+
+        # A System Profile is required before an alter
+        # can be created. This is also checked again
+        # when the alter is finally saved.
         try:
 
             profile = (
@@ -2703,6 +2810,19 @@ class Alters(
         self,
         interaction: discord.Interaction,
     ):
+
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use alter profiles."
+                ),
+                ephemeral=True,
+            )
 
         try:
 
@@ -2809,6 +2929,19 @@ class Alters(
         alter_id: int,
     ):
 
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use alter profiles."
+                ),
+                ephemeral=True,
+            )
+
         try:
 
             profile, alter = (
@@ -2890,6 +3023,19 @@ class Alters(
         interaction: discord.Interaction,
         alter_id: int,
     ):
+
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use alter profiles."
+                ),
+                ephemeral=True,
+            )
 
         try:
 
