@@ -280,12 +280,53 @@ class Database:
 
         await self.execute(
             """
-            CREATE TABLE IF NOT EXISTS guild_auto_roles (
-                guild_id BIGINT PRIMARY KEY,
-                auto_role_1 BIGINT,
-                auto_role_2 BIGINT,
-                auto_role_3 BIGINT
+            CREATE TABLE IF NOT EXISTS guild_auto_role_entries (
+                guild_id BIGINT NOT NULL,
+                role_id BIGINT NOT NULL,
+                PRIMARY KEY (
+                    guild_id,
+                    role_id
+                )
             )
+            """
+        )
+
+        # Import the older three-slot auto-role table once, if it exists.
+        # The old table is intentionally left in place for compatibility.
+        await self.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'guild_auto_roles'
+                      AND column_name = 'auto_role_1'
+                ) THEN
+                    INSERT INTO guild_auto_role_entries (
+                        guild_id,
+                        role_id
+                    )
+                    SELECT
+                        guild_id,
+                        roles.role_id
+                    FROM guild_auto_roles
+                    CROSS JOIN LATERAL UNNEST(
+                        ARRAY[
+                            auto_role_1,
+                            auto_role_2,
+                            auto_role_3
+                        ]
+                    ) AS roles(role_id)
+                    WHERE roles.role_id IS NOT NULL
+                    ON CONFLICT (
+                        guild_id,
+                        role_id
+                    )
+                    DO NOTHING;
+                END IF;
+            END
+            $$;
             """
         )
 
@@ -916,17 +957,20 @@ class Database:
             if not row:
                 return None
 
-            auto_role_row = await conn.fetchrow(
+            auto_role_rows = await conn.fetch(
                 """
-                SELECT
-                    auto_role_1,
-                    auto_role_2,
-                    auto_role_3
-                FROM guild_auto_roles
+                SELECT role_id
+                FROM guild_auto_role_entries
                 WHERE guild_id = $1
+                ORDER BY role_id
                 """,
                 guild_id,
             )
+
+            auto_role_ids = [
+                item["role_id"]
+                for item in auto_role_rows
+            ]
 
             # Prefer the new mod_role column. Fall back to the
             # old staff_role value for servers not migrated yet.
@@ -978,24 +1022,29 @@ class Database:
                         row["enforce_only_post"]
                     ),
 
+                "auto_roles":
+                    auto_role_ids,
+
+                # Legacy aliases for any older code that still expects
+                # the original three auto-role fields.
                 "auto_role_1":
                     (
-                        auto_role_row["auto_role_1"]
-                        if auto_role_row
+                        auto_role_ids[0]
+                        if len(auto_role_ids) > 0
                         else None
                     ),
 
                 "auto_role_2":
                     (
-                        auto_role_row["auto_role_2"]
-                        if auto_role_row
+                        auto_role_ids[1]
+                        if len(auto_role_ids) > 1
                         else None
                     ),
 
                 "auto_role_3":
                     (
-                        auto_role_row["auto_role_3"]
-                        if auto_role_row
+                        auto_role_ids[2]
+                        if len(auto_role_ids) > 2
                         else None
                     ),
             }
@@ -1182,71 +1231,170 @@ class Database:
     # GUILD AUTO ROLES
     # ==================================================
 
-    async def save_guild_auto_roles(
-        self,
-        guild_id: int,
-        auto_role_1_id: int | None = None,
-        auto_role_2_id: int | None = None,
-        auto_role_3_id: int | None = None,
-    ):
-        await self.execute(
-            """
-            INSERT INTO guild_auto_roles (
-                guild_id,
-                auto_role_1,
-                auto_role_2,
-                auto_role_3
-            )
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                auto_role_1 = EXCLUDED.auto_role_1,
-                auto_role_2 = EXCLUDED.auto_role_2,
-                auto_role_3 = EXCLUDED.auto_role_3
-            """,
-            guild_id,
-            auto_role_1_id,
-            auto_role_2_id,
-            auto_role_3_id,
-        )
-
     async def get_guild_auto_roles(
         self,
         guild_id: int,
     ) -> list[int]:
-        row = await self.fetchrow(
+
+        rows = await self.fetch(
             """
+            SELECT role_id
+            FROM guild_auto_role_entries
+            WHERE guild_id = $1
+            ORDER BY role_id
+            """,
+            guild_id,
+        )
+
+        return [
+            row["role_id"]
+            for row in rows
+        ]
+
+    async def add_guild_auto_roles(
+        self,
+        guild_id: int,
+        role_ids: list[int],
+    ):
+
+        cleaned_role_ids = list(
+            dict.fromkeys(
+                int(role_id)
+                for role_id in role_ids
+                if role_id
+            )
+        )
+
+        if not cleaned_role_ids:
+            return
+
+        await self.execute(
+            """
+            INSERT INTO guild_auto_role_entries (
+                guild_id,
+                role_id
+            )
             SELECT
-                auto_role_1,
-                auto_role_2,
-                auto_role_3
-            FROM guild_auto_roles
+                $1,
+                roles.role_id
+            FROM UNNEST(
+                $2::BIGINT[]
+            ) AS roles(role_id)
+            ON CONFLICT (
+                guild_id,
+                role_id
+            )
+            DO NOTHING
+            """,
+            guild_id,
+            cleaned_role_ids,
+        )
+
+    async def remove_guild_auto_roles(
+        self,
+        guild_id: int,
+        role_ids: list[int],
+    ):
+
+        cleaned_role_ids = list(
+            dict.fromkeys(
+                int(role_id)
+                for role_id in role_ids
+                if role_id
+            )
+        )
+
+        if not cleaned_role_ids:
+            return
+
+        await self.execute(
+            """
+            DELETE FROM guild_auto_role_entries
+            WHERE guild_id = $1
+              AND role_id = ANY(
+                  $2::BIGINT[]
+              )
+            """,
+            guild_id,
+            cleaned_role_ids,
+        )
+
+    async def clear_guild_auto_roles(
+        self,
+        guild_id: int,
+    ):
+
+        await self.execute(
+            """
+            DELETE FROM guild_auto_role_entries
             WHERE guild_id = $1
             """,
             guild_id,
         )
 
-        if not row:
-            return []
+    async def save_guild_auto_roles(
+        self,
+        guild_id: int,
+        role_ids: list[int],
+    ):
+        """
+        Replace all saved join auto roles for a guild.
 
-        role_ids = []
+        This helper is kept for convenience while the panel itself
+        normally uses add/remove/clear operations.
+        """
 
-        for key in (
-            "auto_role_1",
-            "auto_role_2",
-            "auto_role_3",
-        ):
-            role_id = row[key]
+        cleaned_role_ids = list(
+            dict.fromkeys(
+                int(role_id)
+                for role_id in role_ids
+                if role_id
+            )
+        )
 
-            if (
-                role_id
-                and role_id not in role_ids
-            ):
-                role_ids.append(
-                    role_id
+        if not self.pool:
+            raise RuntimeError(
+                (
+                    "Database pool is not initialized. "
+                    "Call db.connect() first."
+                )
+            )
+
+        async with self.pool.acquire() as conn:
+
+            async with conn.transaction():
+
+                await conn.execute(
+                    """
+                    DELETE FROM guild_auto_role_entries
+                    WHERE guild_id = $1
+                    """,
+                    guild_id,
                 )
 
-        return role_ids
+                if cleaned_role_ids:
+
+                    await conn.execute(
+                        """
+                        INSERT INTO guild_auto_role_entries (
+                            guild_id,
+                            role_id
+                        )
+                        SELECT
+                            $1,
+                            roles.role_id
+                        FROM UNNEST(
+                            $2::BIGINT[]
+                        ) AS roles(role_id)
+                        ON CONFLICT (
+                            guild_id,
+                            role_id
+                        )
+                        DO NOTHING
+                        """,
+                        guild_id,
+                        cleaned_role_ids,
+                    )
 
 
 # ==================================================
