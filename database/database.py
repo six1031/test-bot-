@@ -265,6 +265,31 @@ class Database:
         )
 
         # ==================================================
+        # SETUP PERSISTENCE
+        #
+        # Keep every /setup option saved between restarts.
+        # ==================================================
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS enforce_only_post
+            BOOLEAN NOT NULL DEFAULT FALSE
+            """
+        )
+
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_auto_roles (
+                guild_id BIGINT PRIMARY KEY,
+                auto_role_1 BIGINT,
+                auto_role_2 BIGINT,
+                auto_role_3 BIGINT
+            )
+            """
+        )
+
+        # ==================================================
         # MEMBER PROFILE STORAGE
         # ==================================================
 
@@ -877,7 +902,9 @@ class Database:
 
                     verified_role,
 
-                    intro_channel
+                    intro_channel,
+
+                    enforce_only_post
 
                 FROM guild_settings
 
@@ -888,6 +915,18 @@ class Database:
 
             if not row:
                 return None
+
+            auto_role_row = await conn.fetchrow(
+                """
+                SELECT
+                    auto_role_1,
+                    auto_role_2,
+                    auto_role_3
+                FROM guild_auto_roles
+                WHERE guild_id = $1
+                """,
+                guild_id,
+            )
 
             # Prefer the new mod_role column. Fall back to the
             # old staff_role value for servers not migrated yet.
@@ -935,7 +974,30 @@ class Database:
                     row["intro_channel"],
 
                 "enforce_only_post":
-                    False,
+                    bool(
+                        row["enforce_only_post"]
+                    ),
+
+                "auto_role_1":
+                    (
+                        auto_role_row["auto_role_1"]
+                        if auto_role_row
+                        else None
+                    ),
+
+                "auto_role_2":
+                    (
+                        auto_role_row["auto_role_2"]
+                        if auto_role_row
+                        else None
+                    ),
+
+                "auto_role_3":
+                    (
+                        auto_role_row["auto_role_3"]
+                        if auto_role_row
+                        else None
+                    ),
             }
 
     async def upsert_guild_settings(
@@ -955,7 +1017,7 @@ class Database:
         ticket_category_id: int | None = None,
         marriage_channel_id: int | None = None,
         relationship_channel_id: int | None = None,
-        enforce_only_post: bool = False,
+        enforce_only_post: bool | None = None,
 
         # --------------------------------------------------
         # PROFILE SYSTEM
@@ -1009,7 +1071,9 @@ class Database:
 
                     verified_role,
 
-                    intro_channel
+                    intro_channel,
+
+                    enforce_only_post
                 )
 
                 VALUES (
@@ -1023,7 +1087,8 @@ class Database:
                     $8,
                     $9,
                     $10,
-                    $11
+                    $11,
+                    COALESCE($12, FALSE)
                 )
 
                 ON CONFLICT (
@@ -1090,6 +1155,12 @@ class Database:
                         COALESCE(
                             EXCLUDED.intro_channel,
                             guild_settings.intro_channel
+                        ),
+
+                    enforce_only_post =
+                        COALESCE(
+                            $12,
+                            guild_settings.enforce_only_post
                         )
                 """,
                 guild_id,
@@ -1103,7 +1174,79 @@ class Database:
                 relationship_channel_id,
                 verified_role_id,
                 intro_channel_id,
+                enforce_only_post,
             )
+
+
+    # ==================================================
+    # GUILD AUTO ROLES
+    # ==================================================
+
+    async def save_guild_auto_roles(
+        self,
+        guild_id: int,
+        auto_role_1_id: int | None = None,
+        auto_role_2_id: int | None = None,
+        auto_role_3_id: int | None = None,
+    ):
+        await self.execute(
+            """
+            INSERT INTO guild_auto_roles (
+                guild_id,
+                auto_role_1,
+                auto_role_2,
+                auto_role_3
+            )
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                auto_role_1 = EXCLUDED.auto_role_1,
+                auto_role_2 = EXCLUDED.auto_role_2,
+                auto_role_3 = EXCLUDED.auto_role_3
+            """,
+            guild_id,
+            auto_role_1_id,
+            auto_role_2_id,
+            auto_role_3_id,
+        )
+
+    async def get_guild_auto_roles(
+        self,
+        guild_id: int,
+    ) -> list[int]:
+        row = await self.fetchrow(
+            """
+            SELECT
+                auto_role_1,
+                auto_role_2,
+                auto_role_3
+            FROM guild_auto_roles
+            WHERE guild_id = $1
+            """,
+            guild_id,
+        )
+
+        if not row:
+            return []
+
+        role_ids = []
+
+        for key in (
+            "auto_role_1",
+            "auto_role_2",
+            "auto_role_3",
+        ):
+            role_id = row[key]
+
+            if (
+                role_id
+                and role_id not in role_ids
+            ):
+                role_ids.append(
+                    role_id
+                )
+
+        return role_ids
 
 
 # ==================================================
