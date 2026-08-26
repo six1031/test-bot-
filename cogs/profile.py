@@ -2464,6 +2464,178 @@ class Profiles(
         self.bot = bot
 
     # ==================================================
+    # SERVER ROLE HELPERS
+    # ==================================================
+
+    async def get_server_roles(
+        self,
+        guild: discord.Guild,
+    ):
+        """
+        Return the configured Admin, Mod and Member roles.
+
+        staff_role is kept as a compatibility fallback for
+        older server settings while the new mod_role system
+        is being rolled out.
+        """
+
+        settings = (
+            await self.bot.db
+            .get_guild_settings(
+                guild.id
+            )
+        )
+
+        if not settings:
+            return None, None, None
+
+        admin_role_id = (
+            settings.get(
+                "admin_role"
+            )
+        )
+
+        mod_role_id = (
+            settings.get(
+                "mod_role"
+            )
+            or settings.get(
+                "staff_role"
+            )
+        )
+
+        member_role_id = (
+            settings.get(
+                "member_role"
+            )
+        )
+
+        admin_role = (
+            guild.get_role(
+                admin_role_id
+            )
+            if admin_role_id
+            else None
+        )
+
+        mod_role = (
+            guild.get_role(
+                mod_role_id
+            )
+            if mod_role_id
+            else None
+        )
+
+        member_role = (
+            guild.get_role(
+                member_role_id
+            )
+            if member_role_id
+            else None
+        )
+
+        return (
+            admin_role,
+            mod_role,
+            member_role,
+        )
+
+    async def is_admin(
+        self,
+        interaction: discord.Interaction,
+    ):
+        """
+        Admin access:
+        - real Discord Administrator permission
+        - configured Admin role
+        """
+
+        guild = interaction.guild
+        member = interaction.user
+
+        if guild is None:
+            return False
+
+        if not isinstance(
+            member,
+            discord.Member,
+        ):
+            return False
+
+        if (
+            member.guild_permissions
+            .administrator
+        ):
+            return True
+
+        admin_role, _, _ = (
+            await self.get_server_roles(
+                guild
+            )
+        )
+
+        if (
+            admin_role
+            and admin_role in member.roles
+        ):
+            return True
+
+        return False
+
+    async def is_member_or_higher(
+        self,
+        interaction: discord.Interaction,
+    ):
+        """
+        Member command access:
+        - configured Member role
+        - configured Mod role
+        - configured Admin role
+        - real Discord Administrator permission
+        """
+
+        guild = interaction.guild
+        member = interaction.user
+
+        if guild is None:
+            return False
+
+        if not isinstance(
+            member,
+            discord.Member,
+        ):
+            return False
+
+        if (
+            member.guild_permissions
+            .administrator
+        ):
+            return True
+
+        (
+            admin_role,
+            mod_role,
+            member_role,
+        ) = await self.get_server_roles(
+            guild
+        )
+
+        allowed_roles = [
+            role
+            for role in (
+                admin_role,
+                mod_role,
+                member_role,
+            )
+            if role is not None
+        ]
+
+        return any(
+            role in member.roles
+            for role in allowed_roles
+        )
+
+    # ==================================================
     # VERIFIED ROLE DETECTION
     # ==================================================
 
@@ -2598,6 +2770,7 @@ class Profiles(
 
     # ==================================================
     # /PROFILE CONFIGURE
+    # ADMIN ONLY
     # ==================================================
 
     @profile.command(
@@ -2621,18 +2794,30 @@ class Profiles(
         intro_channel: discord.TextChannel,
     ):
 
-        if not (
-            interaction.user
-            .guild_permissions
-            .manage_guild
+        if interaction.guild is None:
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ This command can only "
+                        "be used inside a server."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        if not await self.is_admin(
+            interaction
         ):
 
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ You need "
-                        "**Manage Server**."
+                        "❌ Only the configured "
+                        "**Admin role** can use "
+                        "`/profile configure`."
                     ),
                     ephemeral=True,
                 )
@@ -2671,6 +2856,7 @@ class Profiles(
 
     # ==================================================
     # /PROFILE SETUP
+    # MEMBER + MOD + ADMIN
     # ==================================================
 
     @profile.command(
@@ -2687,7 +2873,33 @@ class Profiles(
         guild = interaction.guild
 
         if guild is None:
-            return
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ This command can only "
+                        "be used inside a server."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        if not await self.is_member_or_higher(
+            interaction
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ You need the configured "
+                        "**Member role** to use "
+                        "member profile commands."
+                    ),
+                    ephemeral=True,
+                )
+            )
 
         settings = (
             await self.bot.db
@@ -2782,6 +2994,7 @@ class Profiles(
 
     # ==================================================
     # /PROFILE EDIT
+    # MEMBER + MOD + ADMIN
     # ==================================================
 
     @profile.command(
@@ -2796,6 +3009,35 @@ class Profiles(
     ):
 
         guild = interaction.guild
+
+        if guild is None:
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ This command can only "
+                        "be used inside a server."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        if not await self.is_member_or_higher(
+            interaction
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ You need the configured "
+                        "**Member role** to use "
+                        "member profile commands."
+                    ),
+                    ephemeral=True,
+                )
+            )
 
         try:
 
@@ -2850,6 +3092,7 @@ class Profiles(
 
     # ==================================================
     # /PROFILE VIEW
+    # MEMBER + MOD + ADMIN
     # ==================================================
 
     @profile.command(
@@ -2869,6 +3112,37 @@ class Profiles(
         user: discord.Member | None = None,
     ):
 
+        guild = interaction.guild
+
+        if guild is None:
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ This command can only "
+                        "be used inside a server."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        if not await self.is_member_or_higher(
+            interaction
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ You need the configured "
+                        "**Member role** to use "
+                        "member profile commands."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
         target = (
             user
             or interaction.user
@@ -2879,7 +3153,7 @@ class Profiles(
             profile = (
                 await self.bot.db
                 .get_member_profile(
-                    interaction.guild.id,
+                    guild.id,
                     target.id,
                 )
             )
