@@ -671,6 +671,142 @@ class Relationships(
         self.bot = bot
 
     # ==================================================
+    # ROLE PERMISSIONS
+    # ==================================================
+
+    async def get_server_roles(
+        self,
+        guild: discord.Guild,
+        settings: dict | None = None,
+    ):
+
+        if settings is None:
+            settings = (
+                await self.bot.db
+                .get_guild_settings(
+                    guild.id
+                )
+            )
+
+        if not settings:
+            return None, None, None
+
+        admin_role_id = settings.get(
+            "admin_role"
+        )
+
+        mod_role_id = (
+            settings.get("mod_role")
+            or settings.get("staff_role")
+        )
+
+        member_role_id = settings.get(
+            "member_role"
+        )
+
+        admin_role = (
+            guild.get_role(admin_role_id)
+            if admin_role_id
+            else None
+        )
+
+        mod_role = (
+            guild.get_role(mod_role_id)
+            if mod_role_id
+            else None
+        )
+
+        member_role = (
+            guild.get_role(member_role_id)
+            if member_role_id
+            else None
+        )
+
+        return (
+            admin_role,
+            mod_role,
+            member_role,
+        )
+
+    async def is_admin(
+        self,
+        interaction: discord.Interaction,
+        settings: dict | None = None,
+    ):
+
+        guild = interaction.guild
+        member = interaction.user
+
+        if (
+            guild is None
+            or not isinstance(
+                member,
+                discord.Member,
+            )
+        ):
+            return False
+
+        # Discord Administrator is always a fallback.
+        if member.guild_permissions.administrator:
+            return True
+
+        admin_role, _, _ = (
+            await self.get_server_roles(
+                guild,
+                settings,
+            )
+        )
+
+        return bool(
+            admin_role
+            and admin_role in member.roles
+        )
+
+    async def has_member_access(
+        self,
+        interaction: discord.Interaction,
+        settings: dict | None = None,
+    ):
+
+        guild = interaction.guild
+        member = interaction.user
+
+        if (
+            guild is None
+            or not isinstance(
+                member,
+                discord.Member,
+            )
+        ):
+            return False
+
+        # Discord Administrator is always a fallback.
+        if member.guild_permissions.administrator:
+            return True
+
+        admin_role, mod_role, member_role = (
+            await self.get_server_roles(
+                guild,
+                settings,
+            )
+        )
+
+        allowed_roles = [
+            role
+            for role in (
+                admin_role,
+                mod_role,
+                member_role,
+            )
+            if role is not None
+        ]
+
+        return any(
+            role in member.roles
+            for role in allowed_roles
+        )
+
+    # ==================================================
     # RUN RELATIONSHIP DATABASE MIGRATION
     # ==================================================
 
@@ -743,6 +879,27 @@ class Relationships(
                         "server settings. "
                         "Ask an admin to run "
                         "`/setup`."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        # --------------------------------------------------
+        # MEMBER + MOD + ADMIN ONLY
+        # --------------------------------------------------
+
+        if not await self.has_member_access(
+            interaction,
+            settings,
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ You need the configured "
+                        "**Member, Mod, or Admin role** "
+                        "to use relationship commands."
                     ),
                     ephemeral=True,
                 )
@@ -1095,6 +1252,19 @@ class Relationships(
         user: discord.Member,
     ):
 
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use `/removerelationship`."
+                ),
+                ephemeral=True,
+            )
+
         selected_type = (
             relationship_type.value
         )
@@ -1284,48 +1454,21 @@ class Relationships(
             )
 
         # --------------------------------------------------
-        # ADMIN ROLE
+        # ADMIN ONLY
         # --------------------------------------------------
 
-        admin_role_id = (
-            settings.get(
-                "admin_role"
-            )
-        )
-
-        if not admin_role_id:
-
-            return await (
-                interaction.response
-                .send_message(
-                    (
-                        "❌ No Admin role "
-                        "has been configured.\n"
-                        "Run `/setup` first."
-                    ),
-                    ephemeral=True,
-                )
-            )
-
-        user_role_ids = [
-            role.id
-            for role
-            in interaction.user.roles
-        ]
-
-        if (
-            admin_role_id
-            not in user_role_ids
+        if not await self.is_admin(
+            interaction,
+            settings,
         ):
 
             return await (
                 interaction.response
                 .send_message(
                     (
-                        "❌ Only members with "
-                        "the configured "
-                        "**Admin role** can "
-                        "use `/forcemarry`."
+                        "❌ Only the configured "
+                        "**Admin role** can use "
+                        "`/forcemarry`."
                     ),
                     ephemeral=True,
                 )
@@ -1504,6 +1647,19 @@ class Relationships(
         interaction: discord.Interaction,
     ):
 
+        if not await self.has_member_access(
+            interaction
+        ):
+
+            return await interaction.response.send_message(
+                (
+                    "❌ You need the configured "
+                    "**Member, Mod, or Admin role** "
+                    "to use `/divorce`."
+                ),
+                ephemeral=True,
+            )
+
         try:
 
             marriage = (
@@ -1680,6 +1836,27 @@ class Relationships(
                         "server settings. "
                         "Ask an admin to run "
                         "`/setup`."
+                    ),
+                    ephemeral=True,
+                )
+            )
+
+        # --------------------------------------------------
+        # MEMBER + MOD + ADMIN ONLY
+        # --------------------------------------------------
+
+        if not await self.has_member_access(
+            interaction,
+            settings,
+        ):
+
+            return await (
+                interaction.response
+                .send_message(
+                    (
+                        "❌ You need the configured "
+                        "**Member, Mod, or Admin role** "
+                        "to use `/tree`."
                     ),
                     ephemeral=True,
                 )
