@@ -232,6 +232,39 @@ class Database:
         )
 
         # ==================================================
+        # COMMAND ACCESS ROLES
+        #
+        # mod_role replaces the old staff_role name.
+        # staff_role is kept for backwards compatibility
+        # with older cogs while they are migrated.
+        # ==================================================
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS mod_role BIGINT
+            """
+        )
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS member_role BIGINT
+            """
+        )
+
+        # Copy the old staff role into mod_role once so
+        # existing server setup is not lost.
+        await self.execute(
+            """
+            UPDATE guild_settings
+            SET mod_role = staff_role
+            WHERE mod_role IS NULL
+              AND staff_role IS NOT NULL
+            """
+        )
+
+        # ==================================================
         # MEMBER PROFILE STORAGE
         # ==================================================
 
@@ -832,6 +865,10 @@ class Database:
 
                     staff_role,
 
+                    mod_role,
+
+                    member_role,
+
                     marriage_channel,
 
                     relationship_channel,
@@ -852,6 +889,14 @@ class Database:
             if not row:
                 return None
 
+            # Prefer the new mod_role column. Fall back to the
+            # old staff_role value for servers not migrated yet.
+            mod_role = (
+                row["mod_role"]
+                if row["mod_role"] is not None
+                else row["staff_role"]
+            )
+
             return {
 
                 "guild_id":
@@ -863,8 +908,16 @@ class Database:
                 "admin_role":
                     row["admin_role"],
 
+                "mod_role":
+                    mod_role,
+
+                "member_role":
+                    row["member_role"],
+
+                # Legacy alias so older ticket/mod cogs that still
+                # ask for staff_role keep working for now.
                 "staff_role":
-                    row["staff_role"],
+                    mod_role,
 
                 "marriage_channel":
                     row["marriage_channel"],
@@ -890,7 +943,15 @@ class Database:
         guild_id: int,
         log_channel_id: int | None = None,
         admin_role_id: int | None = None,
+        mod_role_id: int | None = None,
+        member_role_id: int | None = None,
+
+        # --------------------------------------------------
+        # LEGACY STAFF NAME
+        # --------------------------------------------------
+
         staff_role_id: int | None = None,
+
         ticket_category_id: int | None = None,
         marriage_channel_id: int | None = None,
         relationship_channel_id: int | None = None,
@@ -914,6 +975,14 @@ class Database:
                 )
             )
 
+        # New code should use mod_role_id. If an older cog still
+        # passes staff_role_id, accept that too.
+        effective_mod_role_id = (
+            mod_role_id
+            if mod_role_id is not None
+            else staff_role_id
+        )
+
         async with self.pool.acquire() as conn:
 
             await conn.execute(
@@ -927,6 +996,10 @@ class Database:
                     admin_role,
 
                     staff_role,
+
+                    mod_role,
+
+                    member_role,
 
                     ticket_category,
 
@@ -948,7 +1021,9 @@ class Database:
                     $6,
                     $7,
                     $8,
-                    $9
+                    $9,
+                    $10,
+                    $11
                 )
 
                 ON CONFLICT (
@@ -973,6 +1048,18 @@ class Database:
                         COALESCE(
                             EXCLUDED.staff_role,
                             guild_settings.staff_role
+                        ),
+
+                    mod_role =
+                        COALESCE(
+                            EXCLUDED.mod_role,
+                            guild_settings.mod_role
+                        ),
+
+                    member_role =
+                        COALESCE(
+                            EXCLUDED.member_role,
+                            guild_settings.member_role
                         ),
 
                     ticket_category =
@@ -1008,7 +1095,9 @@ class Database:
                 guild_id,
                 log_channel_id,
                 admin_role_id,
-                staff_role_id,
+                effective_mod_role_id,
+                effective_mod_role_id,
+                member_role_id,
                 ticket_category_id,
                 marriage_channel_id,
                 relationship_channel_id,
