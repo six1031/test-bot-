@@ -10,7 +10,7 @@ from database.database import db
 async def init_looking_for_tables():
 
     # --------------------------------------------------
-    # LOOKING FOR SETTINGS
+    # GENERAL SETTINGS
     # --------------------------------------------------
 
     await db.execute(
@@ -20,8 +20,6 @@ async def init_looking_for_tables():
             guild_id BIGINT PRIMARY KEY,
 
             panel_channel_id BIGINT,
-
-            posts_channel_id BIGINT,
 
             selfies_channel_id BIGINT,
 
@@ -43,6 +41,30 @@ async def init_looking_for_tables():
     )
 
     # --------------------------------------------------
+    # CATEGORY CHANNELS
+    #
+    # Each Looking For category can have its own channel.
+    # --------------------------------------------------
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS looking_for_category_channels (
+
+            guild_id BIGINT NOT NULL,
+
+            category TEXT NOT NULL,
+
+            channel_id BIGINT NOT NULL,
+
+            PRIMARY KEY (
+                guild_id,
+                category
+            )
+        )
+        """
+    )
+
+    # --------------------------------------------------
     # LOOKING FOR POSTS
     # --------------------------------------------------
 
@@ -55,6 +77,8 @@ async def init_looking_for_tables():
             guild_id BIGINT NOT NULL,
 
             user_id BIGINT NOT NULL,
+
+            looking_for_role TEXT NOT NULL,
 
             channel_id BIGINT,
 
@@ -82,7 +106,7 @@ async def init_looking_for_tables():
 
             status TEXT
                 NOT NULL
-                DEFAULT 'active',
+                DEFAULT 'draft',
 
             created_at TIMESTAMP
                 NOT NULL
@@ -92,20 +116,55 @@ async def init_looking_for_tables():
                 NOT NULL
                 DEFAULT CURRENT_TIMESTAMP,
 
+            published_at TIMESTAMP,
+
             closed_at TIMESTAMP
         )
         """
     )
 
-    # Only allow one active post per member
+    # --------------------------------------------------
+    # MIGRATE OLDER LOOKING FOR TABLE
+    # --------------------------------------------------
+
+    await db.execute(
+        """
+        ALTER TABLE looking_for_posts
+        ADD COLUMN IF NOT EXISTS looking_for_role TEXT
+        """
+    )
+
+    await db.execute(
+        """
+        ALTER TABLE looking_for_posts
+        ADD COLUMN IF NOT EXISTS published_at TIMESTAMP
+        """
+    )
+
+    # Remove the old rule that only allowed
+    # one active post total.
+    await db.execute(
+        """
+        DROP INDEX IF EXISTS
+        looking_for_one_active_post_per_user
+        """
+    )
+
+    # --------------------------------------------------
+    # ONE ACTIVE POST PER CATEGORY
+    # --------------------------------------------------
+
     await db.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS
-        looking_for_one_active_post_per_user
+        looking_for_one_active_post_per_category
+
         ON looking_for_posts (
             guild_id,
-            user_id
+            user_id,
+            looking_for_role
         )
+
         WHERE status = 'active'
         """
     )
@@ -184,13 +243,12 @@ async def init_looking_for_tables():
 
 
 # ==================================================
-# SETTINGS
+# GENERAL SETTINGS
 # ==================================================
 
 async def save_looking_for_settings(
     guild_id: int,
     panel_channel_id: int | None = None,
-    posts_channel_id: int | None = None,
     selfies_channel_id: int | None = None,
     panel_message_id: int | None = None,
     enabled: bool | None = None,
@@ -201,7 +259,6 @@ async def save_looking_for_settings(
         INSERT INTO looking_for_settings (
             guild_id,
             panel_channel_id,
-            posts_channel_id,
             selfies_channel_id,
             panel_message_id,
             enabled,
@@ -213,8 +270,7 @@ async def save_looking_for_settings(
             $2,
             $3,
             $4,
-            $5,
-            COALESCE($6, TRUE),
+            COALESCE($5, TRUE),
             CURRENT_TIMESTAMP
         )
 
@@ -226,12 +282,6 @@ async def save_looking_for_settings(
                 COALESCE(
                     EXCLUDED.panel_channel_id,
                     looking_for_settings.panel_channel_id
-                ),
-
-            posts_channel_id =
-                COALESCE(
-                    EXCLUDED.posts_channel_id,
-                    looking_for_settings.posts_channel_id
                 ),
 
             selfies_channel_id =
@@ -248,7 +298,7 @@ async def save_looking_for_settings(
 
             enabled =
                 COALESCE(
-                    $6,
+                    $5,
                     looking_for_settings.enabled
                 ),
 
@@ -257,7 +307,6 @@ async def save_looking_for_settings(
         """,
         guild_id,
         panel_channel_id,
-        posts_channel_id,
         selfies_channel_id,
         panel_message_id,
         enabled,
@@ -270,15 +319,7 @@ async def get_looking_for_settings(
 
     row = await db.fetchrow(
         """
-        SELECT
-            guild_id,
-            panel_channel_id,
-            posts_channel_id,
-            selfies_channel_id,
-            panel_message_id,
-            enabled,
-            created_at,
-            updated_at
+        SELECT *
 
         FROM looking_for_settings
 
@@ -294,12 +335,115 @@ async def get_looking_for_settings(
 
 
 # ==================================================
+# CATEGORY CHANNELS
+# ==================================================
+
+async def set_looking_for_category_channel(
+    guild_id: int,
+    category: str,
+    channel_id: int,
+):
+
+    await db.execute(
+        """
+        INSERT INTO looking_for_category_channels (
+            guild_id,
+            category,
+            channel_id
+        )
+
+        VALUES (
+            $1,
+            $2,
+            $3
+        )
+
+        ON CONFLICT (
+            guild_id,
+            category
+        )
+
+        DO UPDATE SET
+            channel_id = EXCLUDED.channel_id
+        """,
+        guild_id,
+        category.lower(),
+        channel_id,
+    )
+
+
+async def get_looking_for_category_channel(
+    guild_id: int,
+    category: str,
+) -> int | None:
+
+    row = await db.fetchrow(
+        """
+        SELECT channel_id
+
+        FROM looking_for_category_channels
+
+        WHERE guild_id = $1
+          AND category = $2
+        """,
+        guild_id,
+        category.lower(),
+    )
+
+    if not row:
+        return None
+
+    return row["channel_id"]
+
+
+async def get_all_looking_for_category_channels(
+    guild_id: int,
+) -> dict[str, int]:
+
+    rows = await db.fetch(
+        """
+        SELECT
+            category,
+            channel_id
+
+        FROM looking_for_category_channels
+
+        WHERE guild_id = $1
+        """,
+        guild_id,
+    )
+
+    return {
+        row["category"]: row["channel_id"]
+        for row in rows
+    }
+
+
+async def remove_looking_for_category_channel(
+    guild_id: int,
+    category: str,
+):
+
+    await db.execute(
+        """
+        DELETE FROM looking_for_category_channels
+
+        WHERE guild_id = $1
+          AND category = $2
+        """,
+        guild_id,
+        category.lower(),
+    )
+
+
+# ==================================================
 # POSTS
 # ==================================================
 
 async def create_looking_for_post(
     guild_id: int,
     user_id: int,
+    looking_for_role: str,
     roles: str | None = None,
     connection_type: str | None = None,
     dynamic_type: str | None = None,
@@ -310,6 +454,7 @@ async def create_looking_for_post(
     dm_status: str | None = None,
     extra: str | None = None,
     selfie_url: str | None = None,
+    status: str = "draft",
 ) -> dict:
 
     row = await db.fetchrow(
@@ -317,6 +462,7 @@ async def create_looking_for_post(
         INSERT INTO looking_for_posts (
             guild_id,
             user_id,
+            looking_for_role,
             roles,
             connection_type,
             dynamic_type,
@@ -326,7 +472,8 @@ async def create_looking_for_post(
             dni,
             dm_status,
             extra,
-            selfie_url
+            selfie_url,
+            status
         )
 
         VALUES (
@@ -341,13 +488,16 @@ async def create_looking_for_post(
             $9,
             $10,
             $11,
-            $12
+            $12,
+            $13,
+            $14
         )
 
         RETURNING *
         """,
         guild_id,
         user_id,
+        looking_for_role.lower(),
         roles,
         connection_type,
         dynamic_type,
@@ -358,30 +508,64 @@ async def create_looking_for_post(
         dm_status,
         extra,
         selfie_url,
+        status,
     )
 
     return dict(row)
 
 
-async def get_active_looking_for_post(
-    guild_id: int,
-    user_id: int,
+# ==================================================
+# COPY A POST INTO ANOTHER CATEGORY
+# ==================================================
+
+async def copy_looking_for_post(
+    post_id: int,
+    new_category: str,
 ) -> dict | None:
 
     row = await db.fetchrow(
         """
-        SELECT *
+        INSERT INTO looking_for_posts (
+            guild_id,
+            user_id,
+            looking_for_role,
+            roles,
+            connection_type,
+            dynamic_type,
+            preferred_vibe,
+            looking_for,
+            questions,
+            dni,
+            dm_status,
+            extra,
+            selfie_url,
+            status
+        )
+
+        SELECT
+            guild_id,
+            user_id,
+            $2,
+            roles,
+            connection_type,
+            dynamic_type,
+            preferred_vibe,
+            looking_for,
+            questions,
+            dni,
+            dm_status,
+            extra,
+            selfie_url,
+            'draft'
 
         FROM looking_for_posts
 
-        WHERE guild_id = $1
-          AND user_id = $2
-          AND status = 'active'
+        WHERE id = $1
 
-        LIMIT 1
+        RETURNING *
         """,
-        guild_id,
-        user_id,
+        post_id,
+        new_category.lower(),
     )
 
     if not row:
@@ -389,6 +573,10 @@ async def get_active_looking_for_post(
 
     return dict(row)
 
+
+# ==================================================
+# GET ONE POST
+# ==================================================
 
 async def get_looking_for_post(
     post_id: int,
@@ -411,7 +599,79 @@ async def get_looking_for_post(
     return dict(row)
 
 
-async def set_looking_for_message(
+# ==================================================
+# GET ACTIVE POST FOR CATEGORY
+# ==================================================
+
+async def get_active_looking_for_post(
+    guild_id: int,
+    user_id: int,
+    looking_for_role: str,
+) -> dict | None:
+
+    row = await db.fetchrow(
+        """
+        SELECT *
+
+        FROM looking_for_posts
+
+        WHERE guild_id = $1
+          AND user_id = $2
+          AND looking_for_role = $3
+          AND status = 'active'
+
+        LIMIT 1
+        """,
+        guild_id,
+        user_id,
+        looking_for_role.lower(),
+    )
+
+    if not row:
+        return None
+
+    return dict(row)
+
+
+# ==================================================
+# GET ALL MEMBER POSTS
+# ==================================================
+
+async def get_user_looking_for_posts(
+    guild_id: int,
+    user_id: int,
+) -> list[dict]:
+
+    rows = await db.fetch(
+        """
+        SELECT *
+
+        FROM looking_for_posts
+
+        WHERE guild_id = $1
+          AND user_id = $2
+          AND status IN (
+              'draft',
+              'active'
+          )
+
+        ORDER BY created_at ASC
+        """,
+        guild_id,
+        user_id,
+    )
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ==================================================
+# PUBLISH POST
+# ==================================================
+
+async def publish_looking_for_post(
     post_id: int,
     channel_id: int,
     message_id: int,
@@ -424,6 +684,8 @@ async def set_looking_for_message(
         SET
             channel_id = $1,
             message_id = $2,
+            status = 'active',
+            published_at = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
 
         WHERE id = $3
@@ -434,24 +696,9 @@ async def set_looking_for_message(
     )
 
 
-async def close_looking_for_post(
-    post_id: int,
-):
-
-    await db.execute(
-        """
-        UPDATE looking_for_posts
-
-        SET
-            status = 'closed',
-            closed_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
-
-        WHERE id = $1
-        """,
-        post_id,
-    )
-
+# ==================================================
+# UPDATE POST FIELD
+# ==================================================
 
 async def update_looking_for_post_field(
     post_id: int,
@@ -460,6 +707,7 @@ async def update_looking_for_post_field(
 ):
 
     allowed_fields = {
+        "looking_for_role",
         "roles",
         "connection_type",
         "dynamic_type",
@@ -480,6 +728,9 @@ async def update_looking_for_post_field(
             "Invalid Looking For field."
         )
 
+    if field == "looking_for_role" and value:
+        value = value.lower()
+
     query = f"""
         UPDATE looking_for_posts
 
@@ -494,6 +745,51 @@ async def update_looking_for_post_field(
         query,
         value,
         post_id,
+    )
+
+
+# ==================================================
+# CLOSE POST
+# ==================================================
+
+async def close_looking_for_post(
+    post_id: int,
+):
+
+    await db.execute(
+        """
+        UPDATE looking_for_posts
+
+        SET
+            status = 'closed',
+            closed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+
+        WHERE id = $1
+        """,
+        post_id,
+    )
+
+
+# ==================================================
+# DELETE DRAFT
+# ==================================================
+
+async def delete_looking_for_draft(
+    post_id: int,
+    user_id: int,
+):
+
+    await db.execute(
+        """
+        DELETE FROM looking_for_posts
+
+        WHERE id = $1
+          AND user_id = $2
+          AND status = 'draft'
+        """,
+        post_id,
+        user_id,
     )
 
 
