@@ -21,8 +21,8 @@ CATEGORY_LABELS = {
     "little": "Little",
     "pet": "Pet",
     "handler": "Handler",
-    "flip": "Flip",
-    "friendship": "Friendship",
+    "partner": "Partner",
+    "friends": "Friends",
 }
 
 
@@ -31,8 +31,8 @@ CATEGORY_EMOJIS = {
     "little": "🧸",
     "pet": "🐾",
     "handler": "🦴",
-    "flip": "🔄",
-    "friendship": "💙",
+    "partner": "💕",
+    "friends": "🤝",
 }
 
 
@@ -70,15 +70,15 @@ class LookingForCategorySelect(discord.ui.Select):
                 description="Create a post looking for a handler.",
             ),
             discord.SelectOption(
-                label="Flip",
-                value="flip",
-                emoji="🔄",
-                description="Create a post looking for a flip.",
+                label="Partner",
+                value="partner",
+                emoji="💕",
+                description="Create a post looking for a partner.",
             ),
             discord.SelectOption(
-                label="Friendship",
-                value="friendship",
-                emoji="💙",
+                label="Friends",
+                value="friends",
+                emoji="🤝",
                 description="Create a post looking for friends.",
             ),
         ]
@@ -97,7 +97,6 @@ class LookingForCategorySelect(discord.ui.Select):
 
         selected = list(self.values)
 
-        # Save the choices temporarily on the View.
         self.view.selected_categories = selected
 
         pretty_categories = []
@@ -323,7 +322,7 @@ class LookingFor(commands.Cog):
 
     async def cog_load(self):
 
-        # Persistent panel button survives bot restarts.
+        # Persistent panel button survives bot restarts
         self.bot.add_view(
             LookingForPanelView()
         )
@@ -339,12 +338,12 @@ class LookingFor(commands.Cog):
     @app_commands.describe(
         panel_channel="Channel containing the Looking For panel",
         selfies_channel="Channel Pillow Pal searches for the latest selfie",
-        caregiver_channel="Posts looking for caregivers",
-        little_channel="Posts looking for littles",
-        pet_channel="Posts looking for pets",
-        handler_channel="Posts looking for handlers",
-        flip_channel="Posts looking for flips",
-        friendship_channel="Posts looking for friendship",
+        caregiver_channel="Looking For A Caregiver posts",
+        little_channel="Looking For A Little posts",
+        pet_channel="Looking For A Pet posts",
+        handler_channel="Looking For A Handler posts",
+        partner_channel="Looking For A Partner posts",
+        friends_channel="Looking For Friends posts",
     )
     async def lookingforsetup(
         self,
@@ -355,8 +354,8 @@ class LookingFor(commands.Cog):
         little_channel: discord.TextChannel,
         pet_channel: discord.TextChannel,
         handler_channel: discord.TextChannel,
-        flip_channel: discord.TextChannel,
-        friendship_channel: discord.TextChannel,
+        partner_channel: discord.TextChannel,
+        friends_channel: discord.TextChannel,
     ):
 
         if not interaction.guild:
@@ -406,8 +405,8 @@ class LookingFor(commands.Cog):
             "little": little_channel.id,
             "pet": pet_channel.id,
             "handler": handler_channel.id,
-            "flip": flip_channel.id,
-            "friendship": friendship_channel.id,
+            "partner": partner_channel.id,
+            "friends": friends_channel.id,
         }
 
         for category, channel_id in category_channels.items():
@@ -432,8 +431,8 @@ class LookingFor(commands.Cog):
                 "🧸 **Littles**\n"
                 "🐾 **Pets**\n"
                 "🦴 **Handlers**\n"
-                "🔄 **Flips**\n"
-                "💙 **Friendship**\n\n"
+                "💕 **Partners**\n"
+                "🤝 **Friends**\n\n"
                 "You can select multiple options and Pillow Pal will "
                 "create a separate post for each one.\n\n"
                 "Your posts can be edited before they're published."
@@ -441,9 +440,7 @@ class LookingFor(commands.Cog):
         )
 
         panel_embed.set_footer(
-            text=(
-                "Pillow Palace • Strictly SFW • 18+"
-            )
+            text="Pillow Palace • Strictly SFW • 18+"
         )
 
         panel_message = await panel_channel.send(
@@ -451,7 +448,7 @@ class LookingFor(commands.Cog):
             view=LookingForPanelView(),
         )
 
-        # Save the permanent panel message ID.
+        # Save permanent panel message ID
         await save_looking_for_settings(
             guild_id=guild_id,
             panel_message_id=panel_message.id,
@@ -481,38 +478,38 @@ class LookingFor(commands.Cog):
         )
 
         confirmation.add_field(
-            name="🍼 Caregivers",
+            name="🍼 Caregiver",
             value=caregiver_channel.mention,
             inline=True,
         )
 
         confirmation.add_field(
-            name="🧸 Littles",
+            name="🧸 Little",
             value=little_channel.mention,
             inline=True,
         )
 
         confirmation.add_field(
-            name="🐾 Pets",
+            name="🐾 Pet",
             value=pet_channel.mention,
             inline=True,
         )
 
         confirmation.add_field(
-            name="🦴 Handlers",
+            name="🦴 Handler",
             value=handler_channel.mention,
             inline=True,
         )
 
         confirmation.add_field(
-            name="🔄 Flips",
-            value=flip_channel.mention,
+            name="💕 Partner",
+            value=partner_channel.mention,
             inline=True,
         )
 
         confirmation.add_field(
-            name="💙 Friendship",
-            value=friendship_channel.mention,
+            name="🤝 Friends",
+            value=friends_channel.mention,
             inline=True,
         )
 
