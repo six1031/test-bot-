@@ -7,6 +7,7 @@ from discord.ext import commands
 
 from database.database import db
 from database.autothreads import get_all_autothreads, init_autothreads_table
+from database.looking_for import init_looking_for_tables
 
 
 TOKEN = os.getenv("TOKEN")
