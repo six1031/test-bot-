@@ -407,6 +407,7 @@ COMMON_ROLE_EMOJIS = [
     ("Roblox", "🟩"),
     ("Overwatch", "🎯"),
     ("Fortnite", "🚌"),
+    ("Call of Duty", "🪖"),
 
     ("Counting Club", "🔢"),
     ("Fishing", "🎣"),
