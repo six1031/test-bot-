@@ -12,16 +12,13 @@ from database.looking_for import (
     set_looking_for_category_channel,
     get_all_looking_for_category_channels,
     get_looking_for_category_channel,
-
     create_looking_for_post,
     get_looking_for_post,
     get_active_looking_for_post,
-    get_user_looking_for_posts,
     publish_looking_for_post,
     update_looking_for_post_field,
     close_looking_for_post,
     delete_looking_for_draft,
-
     create_looking_for_report,
 )
 
@@ -39,7 +36,6 @@ CATEGORY_LABELS = {
     "friends": "Friends",
 }
 
-
 CATEGORY_EMOJIS = {
     "caregiver": "🍼",
     "little": "🧸",
@@ -50,52 +46,11 @@ CATEGORY_EMOJIS = {
 }
 
 
-CATEGORY_OPTIONS = [
-    discord.SelectOption(
-        label="Caregiver",
-        value="caregiver",
-        emoji="🍼",
-        description="I'm looking for a caregiver.",
-    ),
-    discord.SelectOption(
-        label="Little",
-        value="little",
-        emoji="🧸",
-        description="I'm looking for a little.",
-    ),
-    discord.SelectOption(
-        label="Pet",
-        value="pet",
-        emoji="🐾",
-        description="I'm looking for a pet.",
-    ),
-    discord.SelectOption(
-        label="Handler",
-        value="handler",
-        emoji="🦴",
-        description="I'm looking for a handler.",
-    ),
-    discord.SelectOption(
-        label="Partner",
-        value="partner",
-        emoji="💕",
-        description="I'm looking for a partner.",
-    ),
-    discord.SelectOption(
-        label="Friends",
-        value="friends",
-        emoji="🤝",
-        description="I'm looking for friends.",
-    ),
-]
-
-
 # ==================================================
 # HELPERS
 # ==================================================
 
 def value_from_row(row, key, default=None):
-
     if not row:
         return default
 
@@ -114,7 +69,6 @@ def value_from_row(row, key, default=None):
 
 
 def clean_text(value, default="Not specified"):
-
     if value is None:
         return default
 
@@ -127,7 +81,6 @@ def clean_text(value, default="Not specified"):
 
 
 def field_text(value, limit=1024):
-
     text = clean_text(value)
 
     if len(text) > limit:
@@ -137,7 +90,6 @@ def field_text(value, limit=1024):
 
 
 async def get_post_by_message_id(message_id: int):
-
     return await db.fetchrow(
         """
         SELECT *
@@ -153,10 +105,7 @@ async def get_latest_selfie(
     guild: discord.Guild,
     user_id: int,
 ):
-
-    settings = await get_looking_for_settings(
-        guild.id
-    )
+    settings = await get_looking_for_settings(guild.id)
 
     if not settings:
         return None
@@ -169,23 +118,16 @@ async def get_latest_selfie(
     if not selfies_channel_id:
         return None
 
-    channel = guild.get_channel(
-        selfies_channel_id
-    )
+    channel = guild.get_channel(selfies_channel_id)
 
     if channel is None:
         try:
-            channel = await guild.fetch_channel(
-                selfies_channel_id
-            )
+            channel = await guild.fetch_channel(selfies_channel_id)
         except Exception:
             return None
 
     try:
-
-        async for message in channel.history(
-            limit=250
-        ):
+        async for message in channel.history(limit=250):
 
             if message.author.id != user_id:
                 continue
@@ -216,9 +158,6 @@ async def get_latest_selfie(
                 if is_image:
                     return attachment.url
 
-    except discord.Forbidden:
-        return None
-
     except Exception as error:
         print(
             f"⚠️ Looking For selfie search failed: {error}"
@@ -231,7 +170,6 @@ async def build_post_embed(
     guild: discord.Guild,
     post,
 ):
-
     user_id = value_from_row(
         post,
         "user_id",
@@ -243,15 +181,11 @@ async def build_post_embed(
         "unknown",
     )
 
-    member = guild.get_member(
-        user_id
-    )
+    member = guild.get_member(user_id)
 
     if member is None:
         try:
-            member = await guild.fetch_member(
-                user_id
-            )
+            member = await guild.fetch_member(user_id)
         except Exception:
             member = None
 
@@ -265,21 +199,23 @@ async def build_post_embed(
         category.title(),
     )
 
+    if category == "friends":
+        title = f"{emoji} Looking For Friends"
+    else:
+        title = f"{emoji} Looking For A {label}"
+
     embed = discord.Embed(
-        title=f"{emoji} Looking For A {label}",
-        description=(
-            field_text(
-                value_from_row(
-                    post,
-                    "looking_for",
-                ),
-                4000,
-            )
+        title=title,
+        description=field_text(
+            value_from_row(
+                post,
+                "looking_for",
+            ),
+            4000,
         ),
     )
 
     if member:
-
         embed.set_author(
             name=member.display_name,
             icon_url=member.display_avatar.url,
@@ -371,12 +307,9 @@ async def build_post_embed(
     )
 
     if extra:
-
         embed.add_field(
             name="📝 Extra",
-            value=field_text(
-                extra
-            ),
+            value=field_text(extra),
             inline=False,
         )
 
@@ -386,9 +319,7 @@ async def build_post_embed(
     )
 
     if selfie_url:
-        embed.set_image(
-            url=selfie_url
-        )
+        embed.set_image(url=selfie_url)
 
     embed.set_footer(
         text=(
@@ -404,10 +335,7 @@ async def refresh_public_post(
     bot,
     post_id: int,
 ):
-
-    post = await get_looking_for_post(
-        post_id
-    )
+    post = await get_looking_for_post(post_id)
 
     if not post:
         return
@@ -430,25 +358,18 @@ async def refresh_public_post(
     if not channel_id or not message_id:
         return
 
-    guild = bot.get_guild(
-        guild_id
-    )
+    guild = bot.get_guild(guild_id)
 
     if guild is None:
         return
 
-    channel = guild.get_channel(
-        channel_id
-    )
+    channel = guild.get_channel(channel_id)
 
     if channel is None:
         return
 
     try:
-
-        message = await channel.fetch_message(
-            message_id
-        )
+        message = await channel.fetch_message(message_id)
 
         embed = await build_post_embed(
             guild,
@@ -478,7 +399,6 @@ class LookingForCreationState:
         user_id: int,
         categories: list[str],
     ):
-
         self.guild_id = guild_id
         self.user_id = user_id
         self.categories = categories
@@ -528,8 +448,7 @@ class LookingForAboutModal(
     dynamic_type = discord.ui.TextInput(
         label="Preferred dynamic",
         placeholder=(
-            "Supportive, structured, gentle, playful, "
-            "nurturing..."
+            "Supportive, structured, gentle, playful, nurturing..."
         ),
         required=False,
         max_length=150,
@@ -538,8 +457,7 @@ class LookingForAboutModal(
     preferred_vibe = discord.ui.TextInput(
         label="Preferred vibe",
         placeholder=(
-            "Calm, patient, affectionate, fun, "
-            "understanding..."
+            "Calm, patient, affectionate, fun, understanding..."
         ),
         required=False,
         max_length=150,
@@ -548,8 +466,8 @@ class LookingForAboutModal(
     looking_for = discord.ui.TextInput(
         label="What are you looking for?",
         placeholder=(
-            "Tell people what kind of person or "
-            "connection you're hoping to find."
+            "Tell people what kind of person or connection "
+            "you're hoping to find."
         ),
         style=discord.TextStyle.paragraph,
         required=True,
@@ -560,30 +478,80 @@ class LookingForAboutModal(
         self,
         state: LookingForCreationState,
     ):
-
         super().__init__()
-
         self.state = state
 
     async def on_submit(
         self,
         interaction: discord.Interaction,
     ):
-
         self.state.roles = self.roles.value
-        self.state.connection_type = (
-            self.connection_type.value
-        )
-        self.state.dynamic_type = (
-            self.dynamic_type.value
-        )
-        self.state.preferred_vibe = (
-            self.preferred_vibe.value
-        )
-        self.state.looking_for = (
-            self.looking_for.value
+        self.state.connection_type = self.connection_type.value
+        self.state.dynamic_type = self.dynamic_type.value
+        self.state.preferred_vibe = self.preferred_vibe.value
+        self.state.looking_for = self.looking_for.value
+
+        embed = discord.Embed(
+            title="✅ About You Saved",
+            description=(
+                "Step 1 is complete.\n\n"
+                "Press **Continue** below to fill in the rest "
+                "of your Looking For post."
+            ),
         )
 
+        await interaction.response.send_message(
+            embed=embed,
+            view=ContinueToDetailsView(
+                self.state
+            ),
+            ephemeral=True,
+        )
+
+
+# ==================================================
+# CONTINUE TO STEP 2
+# ==================================================
+
+class ContinueToDetailsView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        state: LookingForCreationState,
+    ):
+        super().__init__(
+            timeout=300
+        )
+
+        self.state = state
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.state.user_id:
+
+            await interaction.response.send_message(
+                "This form belongs to someone else.",
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Continue",
+        emoji="➡️",
+        style=discord.ButtonStyle.success,
+    )
+    async def continue_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         await interaction.response.send_modal(
             LookingForDetailsModal(
                 self.state
@@ -644,16 +612,13 @@ class LookingForDetailsModal(
         self,
         state: LookingForCreationState,
     ):
-
         super().__init__()
-
         self.state = state
 
     async def on_submit(
         self,
         interaction: discord.Interaction,
     ):
-
         self.state.questions = self.questions.value
         self.state.dni = self.dni.value
         self.state.dm_status = self.dm_status.value
@@ -680,9 +645,7 @@ class LookingForDetailsModal(
                 ),
             )
 
-            embed.set_image(
-                url=selfie_url
-            )
+            embed.set_image(url=selfie_url)
 
             await interaction.followup.send(
                 embed=embed,
@@ -705,14 +668,15 @@ class LookingForDetailsModal(
 # SELFIE CHOICE
 # ==================================================
 
-class SelfieChoiceView(discord.ui.View):
+class SelfieChoiceView(
+    discord.ui.View
+):
 
     def __init__(
         self,
         state: LookingForCreationState,
         selfie_url: str,
     ):
-
         super().__init__(
             timeout=300
         )
@@ -724,7 +688,6 @@ class SelfieChoiceView(discord.ui.View):
         self,
         interaction: discord.Interaction,
     ):
-
         if interaction.user.id != self.state.user_id:
 
             await interaction.response.send_message(
@@ -746,7 +709,6 @@ class SelfieChoiceView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         self.state.selfie_url = self.selfie_url
 
         await interaction.response.defer(
@@ -768,7 +730,6 @@ class SelfieChoiceView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         self.state.selfie_url = None
 
         await interaction.response.defer(
@@ -789,13 +750,11 @@ async def create_drafts_and_show(
     interaction: discord.Interaction,
     state: LookingForCreationState,
 ):
-
     state.post_ids = []
 
     for category in state.categories:
 
         try:
-
             post = await create_looking_for_post(
                 guild_id=state.guild_id,
                 user_id=state.user_id,
@@ -825,12 +784,9 @@ async def create_drafts_and_show(
                 post_id = post
 
             if post_id:
-                state.post_ids.append(
-                    post_id
-                )
+                state.post_ids.append(post_id)
 
         except Exception as error:
-
             print(
                 f"❌ Failed to create Looking For draft: {error}"
             )
@@ -840,8 +796,8 @@ async def create_drafts_and_show(
         await interaction.followup.send(
             (
                 "❌ I couldn't create your drafts.\n\n"
-                "Check the Railway logs and send me the "
-                "error if one appeared."
+                "Check the Pillow Pal Railway service logs "
+                "for an error."
             ),
             ephemeral=True,
         )
@@ -862,14 +818,11 @@ async def show_draft_manager(
     interaction: discord.Interaction,
     post_ids: list[int],
 ):
-
     posts = []
 
     for post_id in post_ids:
 
-        post = await get_looking_for_post(
-            post_id
-        )
+        post = await get_looking_for_post(post_id)
 
         if post:
             posts.append(post)
@@ -908,13 +861,14 @@ async def show_draft_manager(
     )
 
 
-class DraftSelect(discord.ui.Select):
+class DraftSelect(
+    discord.ui.Select
+):
 
     def __init__(
         self,
         post_ids: list[int],
     ):
-
         options = []
 
         for post_id in post_ids:
@@ -923,9 +877,7 @@ class DraftSelect(discord.ui.Select):
                 discord.SelectOption(
                     label=f"Draft #{post_id}",
                     value=str(post_id),
-                    description=(
-                        "Select this draft to manage it."
-                    ),
+                    description="Select this draft to manage it.",
                 )
             )
 
@@ -940,7 +892,6 @@ class DraftSelect(discord.ui.Select):
         self,
         interaction: discord.Interaction,
     ):
-
         self.view.selected_post_id = int(
             self.values[0]
         )
@@ -977,14 +928,15 @@ class DraftSelect(discord.ui.Select):
         )
 
 
-class DraftManagerView(discord.ui.View):
+class DraftManagerView(
+    discord.ui.View
+):
 
     def __init__(
         self,
         user_id: int,
         post_ids: list[int],
     ):
-
         super().__init__(
             timeout=900
         )
@@ -999,16 +951,13 @@ class DraftManagerView(discord.ui.View):
         )
 
         self.add_item(
-            DraftSelect(
-                post_ids
-            )
+            DraftSelect(post_ids)
         )
 
     async def interaction_check(
         self,
         interaction: discord.Interaction,
     ):
-
         if interaction.user.id != self.user_id:
 
             await interaction.response.send_message(
@@ -1031,7 +980,6 @@ class DraftManagerView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         if not self.selected_post_id:
             return
 
@@ -1055,7 +1003,6 @@ class DraftManagerView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         if not self.selected_post_id:
             return
 
@@ -1075,7 +1022,6 @@ class DraftManagerView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         await interaction.response.defer(
             ephemeral=True
         )
@@ -1089,9 +1035,7 @@ class DraftManagerView(discord.ui.View):
                 post_id,
             )
 
-            results.append(
-                result
-            )
+            results.append(result)
 
         await interaction.followup.send(
             "\n".join(results),
@@ -1109,7 +1053,6 @@ class DraftManagerView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         if not self.selected_post_id:
             return
 
@@ -1141,13 +1084,14 @@ EDIT_FIELDS = {
 }
 
 
-class EditFieldSelect(discord.ui.Select):
+class EditFieldSelect(
+    discord.ui.Select
+):
 
     def __init__(
         self,
         post_id: int,
     ):
-
         self.post_id = post_id
 
         options = []
@@ -1172,7 +1116,6 @@ class EditFieldSelect(discord.ui.Select):
         self,
         interaction: discord.Interaction,
     ):
-
         field = self.values[0]
 
         post = await get_looking_for_post(
@@ -1203,14 +1146,15 @@ class EditFieldSelect(discord.ui.Select):
         )
 
 
-class EditPostFieldView(discord.ui.View):
+class EditPostFieldView(
+    discord.ui.View
+):
 
     def __init__(
         self,
         user_id: int,
         post_id: int,
     ):
-
         super().__init__(
             timeout=300
         )
@@ -1218,16 +1162,13 @@ class EditPostFieldView(discord.ui.View):
         self.user_id = user_id
 
         self.add_item(
-            EditFieldSelect(
-                post_id
-            )
+            EditFieldSelect(post_id)
         )
 
     async def interaction_check(
         self,
         interaction: discord.Interaction,
     ):
-
         if interaction.user.id != self.user_id:
 
             await interaction.response.send_message(
@@ -1258,7 +1199,6 @@ class EditSingleFieldModal(
         field: str,
         current_value: str,
     ):
-
         super().__init__()
 
         self.post_id = post_id
@@ -1277,7 +1217,6 @@ class EditSingleFieldModal(
         self,
         interaction: discord.Interaction,
     ):
-
         post = await get_looking_for_post(
             self.post_id
         )
@@ -1315,7 +1254,6 @@ class EditSingleFieldModal(
         )
 
         if status == "active":
-
             await refresh_public_post(
                 interaction.client,
                 self.post_id,
@@ -1345,7 +1283,6 @@ async def publish_single_post(
     interaction: discord.Interaction,
     post_id: int,
 ):
-
     await interaction.response.defer(
         ephemeral=True
     )
@@ -1365,7 +1302,6 @@ async def publish_post_core(
     interaction: discord.Interaction,
     post_id: int,
 ):
-
     post = await get_looking_for_post(
         post_id
     )
@@ -1435,7 +1371,9 @@ async def publish_post_core(
                 channel_id
             )
         except Exception:
-            return "❌ I couldn't find the destination channel."
+            return (
+                "❌ I couldn't find the destination channel."
+            )
 
     embed = await build_post_embed(
         interaction.guild,
@@ -1443,14 +1381,12 @@ async def publish_post_core(
     )
 
     try:
-
         message = await channel.send(
             embed=embed,
             view=ActiveLookingForView(),
         )
 
     except discord.Forbidden:
-
         return (
             f"❌ I don't have permission to post in "
             f"{channel.mention}."
@@ -1477,10 +1413,11 @@ async def publish_post_core(
 # PUBLIC POST VIEW
 # ==================================================
 
-class ActiveLookingForView(discord.ui.View):
+class ActiveLookingForView(
+    discord.ui.View
+):
 
     def __init__(self):
-
         super().__init__(
             timeout=None
         )
@@ -1496,7 +1433,6 @@ class ActiveLookingForView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         post = await get_post_by_message_id(
             interaction.message.id
         )
@@ -1585,7 +1521,6 @@ class ActiveLookingForView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         post = await get_post_by_message_id(
             interaction.message.id
         )
@@ -1628,7 +1563,6 @@ class ActiveLookingForView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         post = await get_post_by_message_id(
             interaction.message.id
         )
@@ -1688,7 +1622,6 @@ class ActiveLookingForView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         post = await get_post_by_message_id(
             interaction.message.id
         )
@@ -1734,16 +1667,13 @@ class ContactRequestModal(
         self,
         post_id: int,
     ):
-
         super().__init__()
-
         self.post_id = post_id
 
     async def on_submit(
         self,
         interaction: discord.Interaction,
     ):
-
         post = await get_looking_for_post(
             self.post_id
         )
@@ -1852,30 +1782,20 @@ class ContactRequestModal(
             label="Accept",
             emoji="✅",
             style=discord.ButtonStyle.success,
-            custom_id=(
-                f"looking_for_accept:{request_id}"
-            ),
+            custom_id=f"looking_for_accept:{request_id}",
         )
 
         decline = discord.ui.Button(
             label="Decline",
             emoji="✖️",
             style=discord.ButtonStyle.danger,
-            custom_id=(
-                f"looking_for_decline:{request_id}"
-            ),
+            custom_id=f"looking_for_decline:{request_id}",
         )
 
-        view.add_item(
-            accept
-        )
-
-        view.add_item(
-            decline
-        )
+        view.add_item(accept)
+        view.add_item(decline)
 
         try:
-
             await recipient.send(
                 embed=embed,
                 view=view,
@@ -1937,7 +1857,6 @@ class ReportPostModal(
         post_id: int,
         reported_user_id: int,
     ):
-
         super().__init__()
 
         self.post_id = post_id
@@ -1947,7 +1866,6 @@ class ReportPostModal(
         self,
         interaction: discord.Interaction,
     ):
-
         await create_looking_for_report(
             post_id=self.post_id,
             guild_id=interaction.guild.id,
@@ -1956,9 +1874,7 @@ class ReportPostModal(
             reason=self.reason.value,
         )
 
-        # Try to send the report to the server log channel too.
         try:
-
             settings = await interaction.client.db.get_guild_settings(
                 interaction.guild.id
             )
@@ -1982,9 +1898,7 @@ class ReportPostModal(
 
                     embed.add_field(
                         name="Post ID",
-                        value=str(
-                            self.post_id
-                        ),
+                        value=str(self.post_id),
                         inline=True,
                     )
 
@@ -2013,7 +1927,6 @@ class ReportPostModal(
                     )
 
         except Exception as error:
-
             print(
                 f"⚠️ Could not send Looking For report to log: {error}"
             )
@@ -2037,20 +1950,56 @@ class LookingForCategorySelect(
 
     def __init__(self):
 
+        options = [
+            discord.SelectOption(
+                label="Caregiver",
+                value="caregiver",
+                emoji="🍼",
+                description="I'm looking for a caregiver.",
+            ),
+            discord.SelectOption(
+                label="Little",
+                value="little",
+                emoji="🧸",
+                description="I'm looking for a little.",
+            ),
+            discord.SelectOption(
+                label="Pet",
+                value="pet",
+                emoji="🐾",
+                description="I'm looking for a pet.",
+            ),
+            discord.SelectOption(
+                label="Handler",
+                value="handler",
+                emoji="🦴",
+                description="I'm looking for a handler.",
+            ),
+            discord.SelectOption(
+                label="Partner",
+                value="partner",
+                emoji="💕",
+                description="I'm looking for a partner.",
+            ),
+            discord.SelectOption(
+                label="Friends",
+                value="friends",
+                emoji="🤝",
+                description="I'm looking for friends.",
+            ),
+        ]
+
         super().__init__(
             placeholder="What are you looking for?",
             min_values=1,
-            max_values=len(
-                CATEGORY_OPTIONS
-            ),
-            options=CATEGORY_OPTIONS,
+            max_values=len(options),
+            options=options,
         )
 
     async def callback(
         self,
         interaction: discord.Interaction,
     ):
-
         self.view.selected_categories = list(
             self.values
         )
@@ -2077,9 +2026,7 @@ class LookingForCategorySelect(
             title="💌 Create A Looking For Post",
             description=(
                 "You've selected:\n\n"
-                + "\n".join(
-                    selected_lines
-                )
+                + "\n".join(selected_lines)
                 + "\n\n"
                 "If you selected more than one, Pillow Pal "
                 "will make a separate post for each section.\n\n"
@@ -2101,7 +2048,6 @@ class LookingForCategoryView(
         self,
         user_id: int,
     ):
-
         super().__init__(
             timeout=300
         )
@@ -2117,7 +2063,6 @@ class LookingForCategoryView(
         self,
         interaction: discord.Interaction,
     ):
-
         if interaction.user.id != self.user_id:
 
             await interaction.response.send_message(
@@ -2139,7 +2084,6 @@ class LookingForCategoryView(
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         if not self.selected_categories:
 
             await interaction.response.send_message(
@@ -2187,7 +2131,6 @@ class LookingForPanelView(
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-
         if not interaction.guild:
 
             await interaction.response.send_message(
@@ -2270,14 +2213,11 @@ class LookingFor(
         self,
         bot,
     ):
-
         self.bot = bot
 
     async def cog_load(
         self
     ):
-
-        # Makes the permanent public buttons survive restarts.
         self.bot.add_view(
             LookingForPanelView()
         )
@@ -2287,7 +2227,7 @@ class LookingFor(
         )
 
     # ==================================================
-    # CONTACT ACCEPT / DECLINE LISTENER
+    # CONTACT ACCEPT / DECLINE
     # ==================================================
 
     @commands.Cog.listener()
@@ -2295,11 +2235,12 @@ class LookingFor(
         self,
         interaction: discord.Interaction,
     ):
-
         if interaction.type != discord.InteractionType.component:
             return
 
-        custom_id = interaction.data.get(
+        data = interaction.data or {}
+
+        custom_id = data.get(
             "custom_id",
             "",
         )
@@ -2307,13 +2248,15 @@ class LookingFor(
         if custom_id.startswith(
             "looking_for_accept:"
         ):
-
-            request_id = int(
-                custom_id.split(
-                    ":",
-                    1,
-                )[1]
-            )
+            try:
+                request_id = int(
+                    custom_id.split(
+                        ":",
+                        1,
+                    )[1]
+                )
+            except ValueError:
+                return
 
             await self.handle_contact_response(
                 interaction,
@@ -2324,13 +2267,15 @@ class LookingFor(
         elif custom_id.startswith(
             "looking_for_decline:"
         ):
-
-            request_id = int(
-                custom_id.split(
-                    ":",
-                    1,
-                )[1]
-            )
+            try:
+                request_id = int(
+                    custom_id.split(
+                        ":",
+                        1,
+                    )[1]
+                )
+            except ValueError:
+                return
 
             await self.handle_contact_response(
                 interaction,
@@ -2344,7 +2289,6 @@ class LookingFor(
         request_id: int,
         accepted: bool,
     ):
-
         request = await db.fetchrow(
             """
             SELECT *
@@ -2424,7 +2368,6 @@ class LookingFor(
             if sender:
 
                 try:
-
                     await sender.send(
                         (
                             "💌 **Your Looking For request was accepted!**\n\n"
@@ -2481,7 +2424,6 @@ class LookingFor(
             if sender:
 
                 try:
-
                     await sender.send(
                         (
                             "💌 Your Looking For request wasn't "
@@ -2537,7 +2479,6 @@ class LookingFor(
         partner_channel: discord.TextChannel,
         friends_channel: discord.TextChannel,
     ):
-
         if not interaction.guild:
 
             await interaction.response.send_message(
@@ -2562,19 +2503,11 @@ class LookingFor(
 
         guild_id = interaction.guild.id
 
-        # --------------------------------------------------
-        # SAVE GENERAL SETTINGS
-        # --------------------------------------------------
-
         await save_looking_for_settings(
             guild_id=guild_id,
             panel_channel_id=panel_channel.id,
             selfies_channel_id=selfies_channel.id,
         )
-
-        # --------------------------------------------------
-        # SAVE DESTINATION CHANNELS
-        # --------------------------------------------------
 
         channels = {
             "caregiver": caregiver_channel.id,
@@ -2592,10 +2525,6 @@ class LookingFor(
                 category=category,
                 channel_id=channel_id,
             )
-
-        # --------------------------------------------------
-        # CREATE PANEL
-        # --------------------------------------------------
 
         panel_embed = discord.Embed(
             title="💌 Looking For",
@@ -2631,10 +2560,6 @@ class LookingFor(
             guild_id=guild_id,
             panel_message_id=panel_message.id,
         )
-
-        # --------------------------------------------------
-        # CONFIRMATION
-        # --------------------------------------------------
 
         confirmation = discord.Embed(
             title="✅ Looking For Setup Complete",
@@ -2702,10 +2627,7 @@ class LookingFor(
 # COG SETUP
 # ==================================================
 
-async def setup(
-    bot
-):
-
+async def setup(bot):
     await bot.add_cog(
         LookingFor(bot)
     )
