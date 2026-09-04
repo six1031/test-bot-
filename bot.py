@@ -120,6 +120,13 @@ async def main():
         except Exception as e:
             print(f"⚠️ init_autothreads_table failed: {e}")
 
+        # Ensure Looking For tables exist
+        try:
+            await init_looking_for_tables()
+            print("✅ Looking For tables ensured.")
+        except Exception as e:
+            print(f"⚠️ init_looking_for_tables failed: {e}")
+
         # Load cogs
         await load_cogs()
 
