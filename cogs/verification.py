@@ -22,9 +22,8 @@ def render_verification_message(
     }
 
     try:
-        return template.format_map(
-            values
-        )
+        return template.format_map(values)
+
     except (
         KeyError,
         ValueError,
@@ -32,9 +31,7 @@ def render_verification_message(
         return template
 
 
-class Verification(
-    commands.Cog
-):
+class Verification(commands.Cog):
 
     def __init__(
         self,
@@ -71,7 +68,7 @@ class Verification(
             return
 
         channel = member.guild.get_channel(
-            channel_id
+            int(channel_id)
         )
 
         if not isinstance(
@@ -102,6 +99,90 @@ class Verification(
             discord.HTTPException,
         ):
             traceback.print_exc()
+
+    # ==================================================
+    # REMOVE NOT VERIFIED ROLE
+    # ==================================================
+
+    async def _remove_not_verified_role(
+        self,
+        member: discord.Member,
+        settings: dict,
+        reason: str,
+    ) -> tuple[bool, str | None]:
+
+        not_verified_role_id = settings.get(
+            "not_verified_role"
+        )
+
+        if not not_verified_role_id:
+            return True, None
+
+        not_verified_role = member.guild.get_role(
+            int(not_verified_role_id)
+        )
+
+        if not_verified_role is None:
+            return (
+                False,
+                "The configured Not Verified role no longer exists."
+            )
+
+        if not_verified_role not in member.roles:
+            return True, None
+
+        if not_verified_role.managed:
+            return (
+                False,
+                "The Not Verified role is managed by Discord."
+            )
+
+        bot_member = (
+            member.guild.me
+            or member.guild.get_member(
+                self.bot.user.id
+            )
+        )
+
+        if (
+            bot_member is None
+            or not_verified_role >= bot_member.top_role
+        ):
+            return (
+                False,
+                (
+                    "I can't remove the Not Verified role because "
+                    "it is above my highest role."
+                )
+            )
+
+        try:
+            await member.remove_roles(
+                not_verified_role,
+                reason=reason,
+            )
+
+            return True, None
+
+        except discord.Forbidden:
+            return (
+                False,
+                (
+                    "I don't have permission to remove "
+                    "the Not Verified role."
+                )
+            )
+
+        except discord.HTTPException:
+            traceback.print_exc()
+
+            return (
+                False,
+                (
+                    "Discord rejected the attempt to remove "
+                    "the Not Verified role."
+                )
+            )
 
     # ==================================================
     # /VERIFY
@@ -149,7 +230,10 @@ class Verification(
                 ephemeral=True,
             )
 
-        # Native Discord Administrator always counts as Admin.
+        # ----------------------------------------------
+        # STAFF PERMISSION CHECK
+        # ----------------------------------------------
+
         is_native_admin = (
             staff_member.guild_permissions.administrator
         )
@@ -171,11 +255,11 @@ class Verification(
         is_configured_staff = bool(
             (
                 admin_role_id
-                and admin_role_id in staff_role_ids
+                and int(admin_role_id) in staff_role_ids
             )
             or (
                 mod_role_id
-                and mod_role_id in staff_role_ids
+                and int(mod_role_id) in staff_role_ids
             )
         )
 
@@ -187,6 +271,10 @@ class Verification(
                 "❌ Only the configured Admin or Mod role can use `/verify`.",
                 ephemeral=True,
             )
+
+        # ----------------------------------------------
+        # VERIFIED ROLE
+        # ----------------------------------------------
 
         verified_role_id = settings.get(
             "verified_role"
@@ -201,11 +289,11 @@ class Verification(
                 ephemeral=True,
             )
 
-        role = guild.get_role(
-            verified_role_id
+        verified_role = guild.get_role(
+            int(verified_role_id)
         )
 
-        if role is None:
+        if verified_role is None:
             return await interaction.response.send_message(
                 "❌ The configured Verified role no longer exists.",
                 ephemeral=True,
@@ -217,19 +305,13 @@ class Verification(
                 ephemeral=True,
             )
 
-        if role in member.roles:
-            return await interaction.response.send_message(
-                f"✅ {member.mention} is already verified.",
-                ephemeral=True,
-            )
-
-        if role.managed:
+        if verified_role.managed:
             return await interaction.response.send_message(
                 "❌ The configured Verified role is managed by Discord.",
                 ephemeral=True,
             )
 
-        if role.permissions.administrator:
+        if verified_role.permissions.administrator:
             return await interaction.response.send_message(
                 (
                     "❌ The configured Verified role has Administrator "
@@ -247,10 +329,16 @@ class Verification(
             or settings.get("staff_role")
         )
 
-        if role.id in {
-            settings_admin_role,
-            settings_mod_role,
-        }:
+        protected_role_ids = {
+            int(role_id)
+            for role_id in (
+                settings_admin_role,
+                settings_mod_role,
+            )
+            if role_id
+        }
+
+        if verified_role.id in protected_role_ids:
             return await interaction.response.send_message(
                 (
                     "❌ The Verified role is currently also configured "
@@ -268,7 +356,7 @@ class Verification(
 
         if (
             bot_member is None
-            or role >= bot_member.top_role
+            or verified_role >= bot_member.top_role
         ):
             return await interaction.response.send_message(
                 (
@@ -278,18 +366,60 @@ class Verification(
                 ephemeral=True,
             )
 
+        reason = (
+            f"Verified by {staff_member} "
+            f"({staff_member.id}) using /verify"
+        )
+
+        # ----------------------------------------------
+        # ALREADY VERIFIED
+        # Still remove Not Verified if they have it
+        # ----------------------------------------------
+
+        if verified_role in member.roles:
+
+            removed, remove_error = (
+                await self._remove_not_verified_role(
+                    member,
+                    settings,
+                    reason,
+                )
+            )
+
+            if removed:
+                return await interaction.response.send_message(
+                    (
+                        f"✅ {member.mention} is already verified.\n"
+                        "🗑️ Their Not Verified role has been removed "
+                        "if it was still present."
+                    ),
+                    ephemeral=True,
+                )
+
+            return await interaction.response.send_message(
+                (
+                    f"✅ {member.mention} is already verified.\n"
+                    f"⚠️ {remove_error}"
+                ),
+                ephemeral=True,
+            )
+
+        # ----------------------------------------------
+        # ADD VERIFIED ROLE
+        # ----------------------------------------------
+
         try:
             await member.add_roles(
-                role,
-                reason=(
-                    f"Verified by {staff_member} "
-                    f"({staff_member.id}) using /verify"
-                ),
+                verified_role,
+                reason=reason,
             )
 
         except discord.Forbidden:
             return await interaction.response.send_message(
-                "❌ I don't have permission to give that member the Verified role.",
+                (
+                    "❌ I don't have permission to give that "
+                    "member the Verified role."
+                ),
                 ephemeral=True,
             )
 
@@ -301,16 +431,43 @@ class Verification(
                 ephemeral=True,
             )
 
-        await interaction.response.send_message(
-            f"✅ {member.mention} has been verified and given {role.mention}.",
-            ephemeral=True,
+        # ----------------------------------------------
+        # REMOVE NOT VERIFIED ROLE
+        # ----------------------------------------------
+
+        removed, remove_error = (
+            await self._remove_not_verified_role(
+                member,
+                settings,
+                reason,
+            )
         )
+
+        if removed:
+            await interaction.response.send_message(
+                (
+                    f"✅ {member.mention} has been verified.\n"
+                    f"➕ Added {verified_role.mention}\n"
+                    "➖ Removed the configured Not Verified role."
+                ),
+                ephemeral=True,
+            )
+
+        else:
+            await interaction.response.send_message(
+                (
+                    f"✅ {member.mention} has been given "
+                    f"{verified_role.mention}.\n"
+                    f"⚠️ {remove_error}"
+                ),
+                ephemeral=True,
+            )
 
     # ==================================================
     # VERIFIED ROLE ADDED
     #
-    # This fires whether the role was added by /verify,
-    # an admin, another bot, or another part of this bot.
+    # Also handles Verified being manually added
+    # by an admin or another bot.
     # ==================================================
 
     @commands.Cog.listener()
@@ -336,6 +493,10 @@ class Verification(
         if not verified_role_id:
             return
 
+        verified_role_id = int(
+            verified_role_id
+        )
+
         before_role_ids = {
             role.id
             for role in before.roles
@@ -346,16 +507,26 @@ class Verification(
             for role in after.roles
         }
 
-        if (
-            verified_role_id
-            not in before_role_ids
-            and verified_role_id
-            in after_role_ids
-        ):
-            await self._send_verified_message(
-                after,
-                settings,
-            )
+        verified_was_added = (
+            verified_role_id not in before_role_ids
+            and verified_role_id in after_role_ids
+        )
+
+        if not verified_was_added:
+            return
+
+        # Remove configured Not Verified role
+        await self._remove_not_verified_role(
+            after,
+            settings,
+            "Verified role was added to member",
+        )
+
+        # Send configured welcome message
+        await self._send_verified_message(
+            after,
+            settings,
+        )
 
 
 async def setup(
