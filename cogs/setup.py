@@ -1217,6 +1217,12 @@ class VerificationConfigView(
             else None
         )
 
+        not_verified_role_id = (
+            settings.get("not_verified_role")
+            if settings
+            else None
+        )
+
         channel_id = (
             settings.get("verification_channel")
             if settings
@@ -1235,6 +1241,12 @@ class VerificationConfigView(
             else "Not configured"
         )
 
+        not_verified_role_text = (
+            f"<@&{not_verified_role_id}>"
+            if not_verified_role_id
+            else "Not configured"
+        )
+
         channel_text = (
             f"<#{channel_id}>"
             if channel_id
@@ -1249,6 +1261,12 @@ class VerificationConfigView(
         embed.add_field(
             name="Verified Role",
             value=role_text,
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Not Verified Role",
+            value=not_verified_role_text,
             inline=False,
         )
 
@@ -1294,6 +1312,24 @@ class VerificationConfigView(
             self.guild_id,
             "verified_role",
             "Verified Role",
+        )
+
+    @discord.ui.button(
+        label="Not Verified Role",
+        emoji="🚫",
+        style=discord.ButtonStyle.danger,
+    )
+    async def not_verified_role(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.cog._send_role_picker(
+            interaction,
+            self.owner_id,
+            self.guild_id,
+            "not_verified_role",
+            "Not Verified Role",
         )
 
     @discord.ui.button(
@@ -1510,7 +1546,8 @@ class ConfigPanelView(
         embed.add_field(
             name="Verification",
             value=(
-                f"✅ Role: {role_value('verified_role')}\n"
+                f"✅ Verified: {role_value('verified_role')}\n"
+                f"🚫 Not Verified: {role_value('not_verified_role')}\n"
                 f"💬 Welcome: {channel_value('verification_channel')}"
             ),
             inline=False,
@@ -1759,6 +1796,13 @@ class SetupCog(commands.Cog):
 
         await db_obj.execute(
             """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS not_verified_role BIGINT
+            """
+        )
+
+        await db_obj.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -1972,9 +2016,33 @@ class SetupCog(commands.Cog):
         if not db_obj:
             return None
 
-        return await db_obj.get_guild_settings(
+        settings = await db_obj.get_guild_settings(
             guild_id
         )
+
+        if settings is None:
+            settings = {}
+
+        if "not_verified_role" not in settings:
+            try:
+                row = await db_obj.fetchrow(
+                    """
+                    SELECT not_verified_role
+                    FROM guild_settings
+                    WHERE guild_id = $1
+                    """,
+                    guild_id,
+                )
+
+                if row:
+                    settings["not_verified_role"] = row[
+                        "not_verified_role"
+                    ]
+
+            except Exception:
+                traceback.print_exc()
+
+        return settings
 
     async def _panel_interaction_check(
         self,
@@ -2053,6 +2121,22 @@ class SetupCog(commands.Cog):
                     guild_id=guild_id,
                     verified_role_id=role_id,
                 )
+
+        elif setting == "not_verified_role":
+            await db_obj.execute(
+                """
+                INSERT INTO guild_settings (
+                    guild_id,
+                    not_verified_role
+                )
+                VALUES ($1, $2)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    not_verified_role = EXCLUDED.not_verified_role
+                """,
+                guild_id,
+                role_id,
+            )
 
         else:
             raise ValueError(
