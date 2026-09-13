@@ -227,6 +227,13 @@ class Database:
         await self.execute(
             """
             ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS not_verified_role BIGINT
+            """
+        )
+
+        await self.execute(
+            """
+            ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS intro_channel BIGINT
             """
         )
@@ -957,6 +964,8 @@ class Database:
 
                     verified_role,
 
+                    not_verified_role,
+
                     intro_channel,
 
                     enforce_only_post,
@@ -1032,6 +1041,9 @@ class Database:
                 "verified_role":
                     row["verified_role"],
 
+                "not_verified_role":
+                    row["not_verified_role"],
+
                 "intro_channel":
                     row["intro_channel"],
 
@@ -1098,6 +1110,8 @@ class Database:
 
         verified_role_id: int | None = None,
 
+        not_verified_role_id: int | None = None,
+
         intro_channel_id: int | None = None,
     ):
 
@@ -1144,6 +1158,8 @@ class Database:
 
                     verified_role,
 
+                    not_verified_role,
+
                     intro_channel,
 
                     enforce_only_post
@@ -1161,7 +1177,8 @@ class Database:
                     $9,
                     $10,
                     $11,
-                    COALESCE($12, FALSE)
+                    $12,
+                    COALESCE($13, FALSE)
                 )
 
                 ON CONFLICT (
@@ -1224,6 +1241,12 @@ class Database:
                             guild_settings.verified_role
                         ),
 
+                    not_verified_role =
+                        COALESCE(
+                            EXCLUDED.not_verified_role,
+                            guild_settings.not_verified_role
+                        ),
+
                     intro_channel =
                         COALESCE(
                             EXCLUDED.intro_channel,
@@ -1232,7 +1255,7 @@ class Database:
 
                     enforce_only_post =
                         COALESCE(
-                            $12,
+                            $13,
                             guild_settings.enforce_only_post
                         )
                 """,
@@ -1246,6 +1269,7 @@ class Database:
                 marriage_channel_id,
                 relationship_channel_id,
                 verified_role_id,
+                not_verified_role_id,
                 intro_channel_id,
                 enforce_only_post,
             )
@@ -1263,6 +1287,16 @@ class Database:
         await self.upsert_guild_settings(
             guild_id=guild_id,
             verified_role_id=role_id,
+        )
+
+    async def set_not_verified_role(
+        self,
+        guild_id: int,
+        role_id: int,
+    ):
+        await self.upsert_guild_settings(
+            guild_id=guild_id,
+            not_verified_role_id=role_id,
         )
 
     async def set_verification_channel(
