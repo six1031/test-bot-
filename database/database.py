@@ -351,6 +351,48 @@ class Database:
             """
         )
 
+
+        # ==================================================
+        # RULES SYSTEM
+        # ==================================================
+
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS server_rules (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        await self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            server_rules_guild_position_idx
+            ON server_rules (guild_id, position)
+            """
+        )
+
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS published_rule_messages (
+                guild_id BIGINT NOT NULL,
+                rule_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                message_id BIGINT NOT NULL,
+                PRIMARY KEY (guild_id, rule_id),
+                FOREIGN KEY (rule_id)
+                    REFERENCES server_rules(id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+
         # ==================================================
         # MEMBER PROFILE STORAGE
         # ==================================================
@@ -1507,6 +1549,285 @@ class Database:
                         guild_id,
                         cleaned_role_ids,
                     )
+
+
+
+    # ==================================================
+    # RULES SYSTEM
+    # ==================================================
+
+    async def get_rules(
+        self,
+        guild_id: int,
+    ) -> list[dict]:
+
+        rows = await self.fetch(
+            """
+            SELECT
+                id,
+                guild_id,
+                title,
+                description,
+                position,
+                created_at,
+                updated_at
+            FROM server_rules
+            WHERE guild_id = $1
+            ORDER BY position ASC, id ASC
+            """,
+            guild_id,
+        )
+
+        return [dict(row) for row in rows]
+
+    async def get_rule(
+        self,
+        guild_id: int,
+        rule_id: int,
+    ) -> Optional[dict]:
+
+        row = await self.fetchrow(
+            """
+            SELECT
+                id,
+                guild_id,
+                title,
+                description,
+                position,
+                created_at,
+                updated_at
+            FROM server_rules
+            WHERE guild_id = $1
+              AND id = $2
+            """,
+            guild_id,
+            rule_id,
+        )
+
+        return dict(row) if row else None
+
+    async def add_rule(
+        self,
+        guild_id: int,
+        title: str,
+        description: str,
+    ) -> int:
+
+        row = await self.fetchrow(
+            """
+            INSERT INTO server_rules (
+                guild_id,
+                title,
+                description,
+                position
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                COALESCE(
+                    (
+                        SELECT MAX(position) + 1
+                        FROM server_rules
+                        WHERE guild_id = $1
+                    ),
+                    1
+                )
+            )
+            RETURNING id
+            """,
+            guild_id,
+            title,
+            description,
+        )
+
+        return int(row["id"])
+
+    async def update_rule(
+        self,
+        guild_id: int,
+        rule_id: int,
+        title: str,
+        description: str,
+    ):
+
+        return await self.execute(
+            """
+            UPDATE server_rules
+            SET
+                title = $1,
+                description = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = $3
+              AND id = $4
+            """,
+            title,
+            description,
+            guild_id,
+            rule_id,
+        )
+
+    async def delete_rule(
+        self,
+        guild_id: int,
+        rule_id: int,
+    ):
+
+        await self.execute(
+            """
+            DELETE FROM server_rules
+            WHERE guild_id = $1
+              AND id = $2
+            """,
+            guild_id,
+            rule_id,
+        )
+
+        await self._normalize_rule_positions(guild_id)
+
+    async def _normalize_rule_positions(
+        self,
+        guild_id: int,
+    ):
+
+        await self.execute(
+            """
+            WITH ordered AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        ORDER BY position ASC, id ASC
+                    ) AS new_position
+                FROM server_rules
+                WHERE guild_id = $1
+            )
+            UPDATE server_rules AS r
+            SET position = ordered.new_position
+            FROM ordered
+            WHERE r.id = ordered.id
+            """,
+            guild_id,
+        )
+
+    async def move_rule(
+        self,
+        guild_id: int,
+        rule_id: int,
+        direction: int,
+    ) -> bool:
+
+        rules = await self.get_rules(guild_id)
+        ids = [int(rule["id"]) for rule in rules]
+
+        if rule_id not in ids:
+            return False
+
+        current_index = ids.index(rule_id)
+        new_index = current_index + direction
+
+        if new_index < 0 or new_index >= len(ids):
+            return False
+
+        other_id = ids[new_index]
+
+        current_rule = rules[current_index]
+        other_rule = rules[new_index]
+
+        if not self.pool:
+            raise RuntimeError(
+                "Database pool is not initialized. Call db.connect() first."
+            )
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    UPDATE server_rules
+                    SET position = $1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE guild_id = $2
+                      AND id = $3
+                    """,
+                    int(other_rule["position"]),
+                    guild_id,
+                    rule_id,
+                )
+                await conn.execute(
+                    """
+                    UPDATE server_rules
+                    SET position = $1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE guild_id = $2
+                      AND id = $3
+                    """,
+                    int(current_rule["position"]),
+                    guild_id,
+                    other_id,
+                )
+
+        return True
+
+    async def get_published_rule_messages(
+        self,
+        guild_id: int,
+    ) -> list[dict]:
+
+        rows = await self.fetch(
+            """
+            SELECT
+                guild_id,
+                rule_id,
+                channel_id,
+                message_id
+            FROM published_rule_messages
+            WHERE guild_id = $1
+            ORDER BY rule_id
+            """,
+            guild_id,
+        )
+
+        return [dict(row) for row in rows]
+
+    async def clear_published_rule_messages(
+        self,
+        guild_id: int,
+    ):
+
+        await self.execute(
+            """
+            DELETE FROM published_rule_messages
+            WHERE guild_id = $1
+            """,
+            guild_id,
+        )
+
+    async def save_published_rule_message(
+        self,
+        guild_id: int,
+        rule_id: int,
+        channel_id: int,
+        message_id: int,
+    ):
+
+        await self.execute(
+            """
+            INSERT INTO published_rule_messages (
+                guild_id,
+                rule_id,
+                channel_id,
+                message_id
+            )
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id, rule_id)
+            DO UPDATE SET
+                channel_id = EXCLUDED.channel_id,
+                message_id = EXCLUDED.message_id
+            """,
+            guild_id,
+            rule_id,
+            channel_id,
+            message_id,
+        )
 
 
 # ==================================================
