@@ -1091,6 +1091,27 @@ class ChannelConfigView(
         )
 
     @discord.ui.button(
+        label="Ban Channel",
+        emoji="🔨",
+        style=discord.ButtonStyle.danger,
+    )
+    async def ban_channel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.cog._send_channel_picker(
+            interaction,
+            self.owner_id,
+            self.guild_id,
+            "ban_channel",
+            "Ban Channel",
+            [
+                discord.ChannelType.text,
+            ],
+        )
+
+    @discord.ui.button(
         label="Relationships",
         emoji="💞",
         style=discord.ButtonStyle.primary,
@@ -1563,6 +1584,7 @@ class ConfigPanelView(
             name="Channels",
             value=(
                 f"📋 Logs: {channel_value('log_channel')}\n"
+                f"🔨 Bans: {channel_value('ban_channel')}\n"
                 f"💞 Relationships: {channel_value('relationship_channel')}\n"
                 f"🌸 Member Profiles: {channel_value('intro_channel')}"
             ),
@@ -1798,6 +1820,13 @@ class SetupCog(commands.Cog):
             """
             ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS not_verified_role BIGINT
+            """
+        )
+
+        await db_obj.execute(
+            """
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS ban_channel BIGINT
             """
         )
 
@@ -2042,6 +2071,25 @@ class SetupCog(commands.Cog):
             except Exception:
                 traceback.print_exc()
 
+        if "ban_channel" not in settings:
+            try:
+                row = await db_obj.fetchrow(
+                    """
+                    SELECT ban_channel
+                    FROM guild_settings
+                    WHERE guild_id = $1
+                    """,
+                    guild_id,
+                )
+
+                if row:
+                    settings["ban_channel"] = row[
+                        "ban_channel"
+                    ]
+
+            except Exception:
+                traceback.print_exc()
+
         return settings
 
     async def _panel_interaction_check(
@@ -2155,6 +2203,22 @@ class SetupCog(commands.Cog):
             await db_obj.upsert_guild_settings(
                 guild_id=guild_id,
                 log_channel_id=channel_id,
+            )
+
+        elif setting == "ban_channel":
+            await db_obj.execute(
+                """
+                INSERT INTO guild_settings (
+                    guild_id,
+                    ban_channel
+                )
+                VALUES ($1, $2)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    ban_channel = EXCLUDED.ban_channel
+                """,
+                guild_id,
+                channel_id,
             )
 
         elif setting == "relationship_channel":
