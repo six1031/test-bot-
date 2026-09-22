@@ -244,6 +244,58 @@ class Moderation(commands.Cog):
         return None
 
     # ==================================================
+    # GET BAN CHANNEL
+    # ==================================================
+
+    async def get_ban_channel(
+        self,
+        guild: discord.Guild,
+    ):
+        settings = await self.bot.db.get_guild_settings(
+            guild.id
+        )
+
+        ban_channel_id = (
+            settings.get("ban_channel")
+            if settings
+            else None
+        )
+
+        # Compatibility fallback in case get_guild_settings()
+        # has not yet been updated to return ban_channel.
+        if not ban_channel_id:
+            try:
+                row = await self.bot.db.fetchrow(
+                    """
+                    SELECT ban_channel
+                    FROM guild_settings
+                    WHERE guild_id = $1
+                    """,
+                    guild.id,
+                )
+
+                if row:
+                    ban_channel_id = row["ban_channel"]
+
+            except Exception:
+                ban_channel_id = None
+
+        if ban_channel_id:
+            channel = guild.get_channel(
+                ban_channel_id
+            )
+
+            if isinstance(
+                channel,
+                discord.TextChannel,
+            ):
+                return channel
+
+        # Until a dedicated ban channel is configured, keep
+        # the old behaviour and use the normal log channel.
+        return await self.get_log_channel(guild)
+
+    # ==================================================
     # /PING
     # ==================================================
 
@@ -490,13 +542,13 @@ class Moderation(commands.Cog):
             url=member.display_avatar.url
         )
 
-        log_channel = await self.get_log_channel(
+        ban_channel = await self.get_ban_channel(
             interaction.guild
         )
 
-        if log_channel:
+        if ban_channel:
             try:
-                await log_channel.send(
+                await ban_channel.send(
                     embed=embed
                 )
             except discord.HTTPException:
