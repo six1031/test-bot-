@@ -1,7 +1,7 @@
 """Pillow Palace XP system (discord.py 2.x; asyncpg-style bot.db).
 
 Commands: /xpsetup, /rank, /leaderboard, /xpadd, /xpremove,
-/xpreset, /xpsync, /xpimporthistory.
+/xpreset, /xpsync, /xpimporthistory, /xpgif, /xptest.
 
 The historical importer awards 5 XP per eligible historic message (up to 2,000
 messages per text channel per run), and records message IDs to avoid duplicates.
@@ -11,6 +11,7 @@ It cannot see deleted messages or inaccessible channels.
 import asyncio
 import logging
 import random
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -174,9 +175,22 @@ class XP(commands.Cog):
             CREATE TABLE IF NOT EXISTS xp_settings (
                 guild_id BIGINT PRIMARY KEY,
                 announce_channel_id BIGINT,
-                announce_enabled BOOLEAN NOT NULL DEFAULT TRUE
+                announce_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                normal_gif_url TEXT,
+                reward_gif_url TEXT,
+                level_50_gif_url TEXT,
+                level_100_gif_url TEXT
             )
         """)
+        # Upgrade existing installations without losing their settings.
+        await self.bot.db.execute(
+            "ALTER TABLE xp_settings ADD COLUMN IF NOT EXISTS normal_gif_url TEXT")
+        await self.bot.db.execute(
+            "ALTER TABLE xp_settings ADD COLUMN IF NOT EXISTS reward_gif_url TEXT")
+        await self.bot.db.execute(
+            "ALTER TABLE xp_settings ADD COLUMN IF NOT EXISTS level_50_gif_url TEXT")
+        await self.bot.db.execute(
+            "ALTER TABLE xp_settings ADD COLUMN IF NOT EXISTS level_100_gif_url TEXT")
         await self.bot.db.execute("""
             CREATE TABLE IF NOT EXISTS xp_members (
                 guild_id BIGINT NOT NULL,
@@ -232,18 +246,155 @@ class XP(commands.Cog):
         except discord.HTTPException:
             log.exception("Discord rejected XP role change")
 
+    @staticmethod
+    def valid_gif_url(url: str) -> bool:
+        """Discord embeds need a public HTTPS image URL (ideally direct .gif)."""
+        try:
+            parsed = urlparse(url)
+            return (parsed.scheme == "https" and bool(parsed.netloc)
+                    and not parsed.username and not parsed.password
+                    and len(url) <= 1800 and not any(c.isspace() for c in url))
+        except ValueError:
+            return False
+
+    async def build_level_embed(self, guild: discord.Guild, member: discord.Member,
+                                level: int, reward_preview: bool = False):
+        rewards = await self.bot.db.fetch(
+            "SELECT level, role_id FROM xp_rewards WHERE guild_id=$1 AND level<=$2 ORDER BY level DESC",
+            guild.id, level)
+        # A reward announcement is only used when this exact level unlocks a configured role.
+        reward = next((r for r in rewards if r['level'] == level), None)
+        is_reward = reward_preview or reward is not None
+        settings = await self.bot.db.fetchrow(
+            "SELECT normal_gif_url, reward_gif_url, level_50_gif_url, level_100_gif_url FROM xp_settings WHERE guild_id=$1", guild.id)
+        # Level 100 has its own GIF; if unset, fall back to the reward GIF.
+        if settings and level == 100 and is_reward:
+            gif_url = settings['level_100_gif_url'] or settings['reward_gif_url']
+        elif settings and level == 50 and is_reward:
+            gif_url = settings['level_50_gif_url'] or settings['reward_gif_url']
+        else:
+            gif_url = settings['reward_gif_url' if is_reward else 'normal_gif_url'] if settings else None
+        if is_reward:
+            embed = discord.Embed(
+                title=f"🏆 Level {level} — Reward Unlocked!",
+                description=f"Congratulations {member.mention}! You've reached **Level {level}**!",
+                color=discord.Color.gold())
+            if reward:
+                embed.add_field(name="New level role", value=f"<@&{reward['role_id']}>", inline=False)
+            elif reward_preview:
+                embed.add_field(name="Reward preview", value="Configure a reward role for this level in `/xpsetup`.", inline=False)
+        else:
+            embed = discord.Embed(
+                title=f"🎉 Level {level}!",
+                description=f"Congratulations {member.mention}! You've reached **Level {level}**!",
+                color=discord.Color.blurple())
+        if gif_url and self.valid_gif_url(gif_url):
+            embed.set_image(url=gif_url)
+        embed.set_footer(text="Pillow Palace • XP & Levels")
+        return embed
+
     async def announce_level(self, member, old_level, new_level):
         row = await self.bot.db.fetchrow(
             "SELECT announce_channel_id, announce_enabled FROM xp_settings WHERE guild_id=$1", member.guild.id)
         if not row or not row['announce_enabled'] or not row['announce_channel_id']:
             return
         channel = member.guild.get_channel(row['announce_channel_id'])
-        if channel is None:
+        if not isinstance(channel, discord.TextChannel):
             return
         try:
-            await channel.send(f"🎉 {member.mention} reached **Level {new_level}**!", allowed_mentions=discord.AllowedMentions(users=True))
+            embed = await self.build_level_embed(member.guild, member, new_level)
+            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
         except discord.HTTPException:
             log.exception("Could not send level-up announcement")
+
+    @app_commands.command(name="xpgif", description="Set normal, reward, level 50 or level 100 GIF URL (admin).")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(kind=[
+        app_commands.Choice(name="Normal level-up", value="normal"),
+        app_commands.Choice(name="Role reward level-up", value="reward"),
+        app_commands.Choice(name="Level 50 special", value="50"),
+        app_commands.Choice(name="Level 100 special", value="100")])
+    @app_commands.describe(kind="Which announcement uses this GIF", url="Public direct GIF URL, or 'remove' to clear")
+    async def xpgif(self, interaction: discord.Interaction, kind: app_commands.Choice[str], url: str):
+        if not interaction.guild:
+            return await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        if url.lower().strip() == "remove":
+            url = None
+        elif not self.valid_gif_url(url):
+            return await interaction.response.send_message(
+                "Use a public HTTPS GIF/image URL (preferably ending in `.gif`), or `remove`.", ephemeral=True)
+        await self.ensure_settings(interaction.guild_id)
+        column = {"normal": "normal_gif_url", "reward": "reward_gif_url", "50": "level_50_gif_url", "100": "level_100_gif_url"}[kind.value]
+        await self.bot.db.execute(f"UPDATE xp_settings SET {column}=$2 WHERE guild_id=$1",
+                                  interaction.guild_id, url)
+        await interaction.response.send_message(
+            f"{'Saved' if url else 'Cleared'} the **{kind.name}** GIF. Use `/xptest` to preview it.", ephemeral=True)
+
+    @app_commands.command(name="xptest", description="Preview a level-up announcement without awarding XP (admin).")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(kind=[
+        app_commands.Choice(name="Normal level-up", value="normal"),
+        app_commands.Choice(name="Role reward level-up", value="reward"),
+        app_commands.Choice(name="Level 50 special", value="50"),
+        app_commands.Choice(name="Level 100 special", value="100")])
+    @app_commands.describe(kind="Type of announcement to preview", level="Level to show (optional)")
+    async def xptest(self, interaction: discord.Interaction, kind: app_commands.Choice[str],
+                     level: app_commands.Range[int, 1, 10000] = None):
+        if not interaction.guild:
+            return await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        await self.ensure_settings(interaction.guild_id)
+        if level is None:
+            level = 100 if kind.value == "100" else (50 if kind.value == "50" else (10 if kind.value == "reward" else 7))
+        embed = await self.build_level_embed(interaction.guild, interaction.user, level,
+                                             reward_preview=(kind.value in ("reward", "50", "100")))
+        # Force the Level 50 preview to use the special GIF, even when testing a different level.
+        if kind.value == "50":
+            row = await self.bot.db.fetchrow(
+                "SELECT level_50_gif_url, reward_gif_url FROM xp_settings WHERE guild_id=$1", interaction.guild_id)
+            embed.title = "🏆 Level 50 — Special Milestone!"
+            if row:
+                special_url = row['level_50_gif_url'] or row['reward_gif_url']
+                if special_url and self.valid_gif_url(special_url):
+                    embed.set_image(url=special_url)
+                else:
+                    embed.set_image(url=None)
+        # Force the Level 100 preview to use the special GIF, even when testing a different level.
+        if kind.value == "100":
+            row = await self.bot.db.fetchrow(
+                "SELECT level_100_gif_url, reward_gif_url FROM xp_settings WHERE guild_id=$1", interaction.guild_id)
+            embed.title = "🏆 Level 100 — Special Milestone!"
+            if row:
+                special_url = row['level_100_gif_url'] or row['reward_gif_url']
+                if special_url and self.valid_gif_url(special_url):
+                    embed.set_image(url=special_url)
+                else:
+                    embed.set_image(url=None)
+        # For a normal preview, force the normal GIF even if a role exists at this level.
+        if kind.value == "normal":
+            row = await self.bot.db.fetchrow(
+                "SELECT normal_gif_url FROM xp_settings WHERE guild_id=$1", interaction.guild_id)
+            embed = discord.Embed(title=f"🎉 Level {level}!",
+                                  description=f"Congratulations {interaction.user.mention}! You've reached **Level {level}**!",
+                                  color=discord.Color.blurple())
+            if row and row['normal_gif_url'] and self.valid_gif_url(row['normal_gif_url']):
+                embed.set_image(url=row['normal_gif_url'])
+            embed.set_footer(text="Pillow Palace • XP & Levels")
+        row = await self.bot.db.fetchrow(
+            "SELECT announce_channel_id FROM xp_settings WHERE guild_id=$1", interaction.guild_id)
+        channel = interaction.guild.get_channel(row['announce_channel_id']) if row and row['announce_channel_id'] else None
+        if not isinstance(channel, discord.TextChannel):
+            return await interaction.response.send_message(
+                "Set an announcement channel in `/xpsetup` first.", ephemeral=True)
+        try:
+            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            log.exception("Could not send XP test announcement")
+            return await interaction.response.send_message(
+                "Couldn't post the preview. Check Send Messages and Embed Links permissions.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Posted a **{kind.name}** preview in {channel.mention}. No XP or roles were changed.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -290,7 +441,8 @@ class XP(commands.Cog):
         await interaction.response.send_message(
             "**Pillow Palace XP settings**\nSelect a level (5–100) and an existing role, then Save reward. "
             "Choose a text channel for level-up announcements. Only the highest earned reward role is kept. "
-            "Members can continue levelling beyond 100 and retain the Level 100 reward.",
+            "Members can continue levelling beyond 100 and retain the Level 100 reward. "
+            "Use `/xpgif` to set GIF links and `/xptest` to preview announcements.",
             view=XPSetupView(self, interaction.user.id), ephemeral=True)
 
     @app_commands.command(name="rank", description="Show a member's XP level and progress.")
