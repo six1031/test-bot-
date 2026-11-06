@@ -17,6 +17,8 @@ AFK_AFTER = timedelta(minutes=30)
 REFRESH_SECONDS = 15
 EVENT_DEBOUNCE_SECONDS = 3
 MAX_LINES = 18  # keep dashboard safely below Discord's embed limits
+MENTION_NOTICE_DELETE_SECONDS = 10
+MENTION_NOTICE_COOLDOWN_SECONDS = 30
 
 
 class AFK(commands.Cog):
@@ -26,6 +28,7 @@ class AFK(commands.Cog):
         self._update_lock = asyncio.Lock()
         self._pending_updates = {}
         self._initialise_task = None
+        self._mention_notice_times = {}
 
     async def cog_load(self):
         await self.bot.db.execute("""
@@ -202,6 +205,7 @@ class AFK(commands.Cog):
             return
         now = datetime.now(timezone.utc)
         try:
+            await self._notify_afk_mentions(message, now)
             await self.bot.db.execute("""
                 INSERT INTO afk_members (guild_id, user_id, last_message, afk_since, reason, manual)
                 VALUES ($1, $2, $3, NULL, NULL, FALSE)
@@ -214,6 +218,60 @@ class AFK(commands.Cog):
             self.schedule_dashboard_update(message.guild.id)
         except Exception:
             log.exception("Could not update AFK activity")
+
+    async def _notify_afk_mentions(self, message: discord.Message, now: datetime):
+        """Post a short-lived public reply when a mentioned member is chat-AFK.
+
+        Discord cannot send ephemeral replies to ordinary messages. We therefore
+        delete the notice after a few seconds and suppress all mention pings.
+        """
+        mentioned = [m for m in message.mentions if not m.bot and m.id != message.author.id]
+        if not mentioned:
+            return
+        unique = list({m.id: m for m in mentioned}.values())[:5]
+        ids = [m.id for m in unique]
+        try:
+            rows = await self.bot.db.fetch(
+                "SELECT user_id, last_message, afk_since, reason FROM afk_members "
+                "WHERE guild_id=$1 AND user_id = ANY($2::BIGINT[])",
+                message.guild.id, ids,
+            )
+        except Exception:
+            log.exception("Could not check mentioned members' AFK statuses")
+            return
+        by_id = {row["user_id"]: row for row in rows}
+        notices = []
+        for member in unique:
+            row = by_id.get(member.id)
+            if row is None:
+                continue
+            last = self._utc(row["last_message"])
+            since = self._utc(row["afk_since"])
+            if since is None and (last is None or now - last < AFK_AFTER):
+                continue
+            key = (message.guild.id, message.channel.id, member.id)
+            previous = self._mention_notice_times.get(key)
+            if previous is not None and (now - previous).total_seconds() < MENTION_NOTICE_COOLDOWN_SECONDS:
+                continue
+            self._mention_notice_times[key] = now
+            afk_start = since or last + AFK_AFTER
+            reason = (row["reason"] or "").replace("\n", " ").replace("\r", " ")
+            reason = discord.utils.escape_mentions(discord.utils.escape_markdown(reason[:120]))
+            line = f"🌙 **{discord.utils.escape_markdown(member.display_name)}** is AFK (since <t:{int(afk_start.timestamp())}:R>)"
+            if reason:
+                line += f" — {reason}"
+            notices.append(line)
+        if not notices:
+            return
+        try:
+            await message.reply(
+                "\n".join(notices[:5]),
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+                delete_after=MENTION_NOTICE_DELETE_SECONDS,
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            log.debug("Unable to send AFK mention notice in channel %s", message.channel.id)
 
     @app_commands.command(name="afk", description="Set yourself as AFK, optionally with a reason.")
     @app_commands.describe(reason="Optional AFK reason")
