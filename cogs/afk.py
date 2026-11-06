@@ -14,7 +14,8 @@ from discord.ext import commands, tasks
 
 log = logging.getLogger(__name__)
 AFK_AFTER = timedelta(minutes=30)
-REFRESH_SECONDS = 60
+REFRESH_SECONDS = 15
+EVENT_DEBOUNCE_SECONDS = 3
 MAX_LINES = 18  # keep dashboard safely below Discord's embed limits
 
 
@@ -23,6 +24,7 @@ class AFK(commands.Cog):
         self.bot = bot
         self._ready = asyncio.Event()
         self._update_lock = asyncio.Lock()
+        self._pending_updates = {}
 
     async def cog_load(self):
         await self.bot.db.execute("""
@@ -49,6 +51,29 @@ class AFK(commands.Cog):
 
     def cog_unload(self):
         self.refresh_dashboards.cancel()
+        for task in self._pending_updates.values():
+            task.cancel()
+        self._pending_updates.clear()
+
+    def schedule_dashboard_update(self, guild_id: int):
+        """Coalesce bursts of activity into one Discord message edit."""
+        pending = self._pending_updates.get(guild_id)
+        if pending and not pending.done():
+            return
+        self._pending_updates[guild_id] = asyncio.create_task(
+            self._delayed_dashboard_update(guild_id)
+        )
+
+    async def _delayed_dashboard_update(self, guild_id: int):
+        try:
+            await asyncio.sleep(EVENT_DEBOUNCE_SECONDS)
+            await self.update_dashboard(guild_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("AFK immediate dashboard update failed for %s", guild_id)
+        finally:
+            self._pending_updates.pop(guild_id, None)
 
     @staticmethod
     def _utc(value):
@@ -71,6 +96,7 @@ class AFK(commands.Cog):
                     reason = NULL,
                     manual = FALSE
             """, message.guild.id, message.author.id, now)
+            self.schedule_dashboard_update(message.guild.id)
         except Exception:
             log.exception("Could not update AFK activity")
 
@@ -91,6 +117,7 @@ class AFK(commands.Cog):
                     reason = EXCLUDED.reason,
                     manual = TRUE
             """, interaction.guild.id, interaction.user.id, now, reason)
+            self.schedule_dashboard_update(interaction.guild.id)
             await interaction.followup.send(f"🌙 You're now AFK. Reason: **{discord.utils.escape_markdown(reason)}**. Send a message or use `/back` to return.", ephemeral=True)
         except Exception:
             log.exception("Failed to set AFK")
@@ -112,6 +139,7 @@ class AFK(commands.Cog):
                     reason = NULL,
                     manual = FALSE
             """, interaction.guild.id, interaction.user.id, now)
+            self.schedule_dashboard_update(interaction.guild.id)
             await interaction.followup.send("🟢 You're marked active again.", ephemeral=True)
         except Exception:
             log.exception("Failed to clear AFK")
@@ -238,13 +266,13 @@ class AFK(commands.Cog):
             embed = discord.Embed(
                 title="🌙 Pillow Palace | Member Activity",
                 description="Based on messages sent in this server, not Discord online status. Members appear after their first tracked message.",
-                colour=discord.Colour.blurple(), timestamp=now,
+                colour=discord.Colour.blurple(),
             )
             embed.add_field(name=f"🟢 Active ({len(active)})", value=("\n".join(active[:MAX_LINES])[:1000] or "None"), inline=False)
             embed.add_field(name=f"🌙 AFK ({len(afk)})", value=("\n".join(afk[:MAX_LINES])[:1000] or "None"), inline=False)
             if len(active) > MAX_LINES or len(afk) > MAX_LINES:
                 embed.add_field(name="More members", value="Use `/activity` for totals or `/afkstatus` for a member's status.", inline=False)
-            embed.set_footer(text="Refreshes every 60 seconds • AFK after 30 minutes")
+            embed.set_footer(text="Updates on activity (about 3s) • checks every 15s • AFK after 30m")
             msg = None
             if config["message_id"]:
                 try:
@@ -252,6 +280,8 @@ class AFK(commands.Cog):
                 except discord.NotFound:
                     pass
             if msg:
+                if msg.embeds and msg.embeds[0].to_dict() == embed.to_dict():
+                    return
                 await msg.edit(embed=embed)
             else:
                 msg = await channel.send(embed=embed)
