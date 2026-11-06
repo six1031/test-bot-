@@ -34,11 +34,34 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
         await self.cog.submit_confession(interaction, str(self.confession.value))
 
 
+class ConfessionButtons(discord.ui.View):
+    """Persistent buttons; custom IDs remain valid after bot restarts."""
+
+    def __init__(self, cog: "Confessions"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Open Support Thread", style=discord.ButtonStyle.secondary,
+        emoji="💬", custom_id="pillow_confessions:support_thread",
+    )
+    async def support_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.open_support_thread(interaction)
+
+    @discord.ui.button(
+        label="Submit a Confession", style=discord.ButtonStyle.primary,
+        emoji="💌", custom_id="pillow_confessions:submit",
+    )
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.open_confession_modal(interaction)
+
+
 class Confessions(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._ready = asyncio.Event()
         self._locks: dict[int, asyncio.Lock] = {}
+        self._thread_locks: dict[int, asyncio.Lock] = {}
         # In-memory cooldowns only: never persist member IDs alongside confessions.
         self._cooldowns: dict[tuple[int, int], datetime] = {}
 
@@ -62,6 +85,7 @@ class Confessions(commands.Cog):
             ALTER TABLE confession_settings
             ADD COLUMN IF NOT EXISTS log_channel_id BIGINT
         """)
+        self.bot.add_view(ConfessionButtons(self))
         self._ready.set()
 
     async def _setting(self, guild_id: int):
@@ -77,11 +101,9 @@ class Confessions(commands.Cog):
         # allowed_mentions=None prevents actual notification delivery.
         return text.strip().replace("@everyone", "@\u200beveryone").replace("@here", "@\u200bhere")
 
-    @app_commands.command(name="confess", description="Submit an anonymous confession privately.")
-    @app_commands.guild_only()
-    async def confess(self, interaction: discord.Interaction):
+    async def open_confession_modal(self, interaction: discord.Interaction):
         if interaction.guild_id is None:
-            return await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            return await interaction.response.send_message("Use this in a server.", ephemeral=True)
         try:
             setting = await self._setting(interaction.guild_id)
         except Exception:
@@ -94,6 +116,74 @@ class Confessions(commands.Cog):
                 "The private moderation log is not configured yet. Please contact an administrator.", ephemeral=True
             )
         await interaction.response.send_modal(ConfessionModal(self))
+
+    @app_commands.command(name="confess", description="Submit an anonymous confession privately.")
+    @app_commands.guild_only()
+    async def confess(self, interaction: discord.Interaction):
+        await self.open_confession_modal(interaction)
+
+    async def open_support_thread(self, interaction: discord.Interaction):
+        """Create a public discussion thread for this confession, or reuse it."""
+        message = interaction.message
+        if not interaction.guild or not message or not isinstance(message.channel, discord.TextChannel):
+            return await interaction.response.send_message("This button works only on a confession post.", ephemeral=True)
+        if message.author.id != self.bot.user.id or not message.embeds or not message.embeds[0].title or not message.embeds[0].title.startswith("💌 Anonymous Confession #"):
+            return await interaction.response.send_message("This isn't a confession post.", ephemeral=True)
+        try:
+            setting = await self._setting(interaction.guild.id)
+            if not setting or message.channel.id != setting["channel_id"]:
+                return await interaction.response.send_message("This isn't the configured confession channel.", ephemeral=True)
+        except Exception:
+            log.exception("Failed to check confession channel")
+            return await interaction.response.send_message("Could not check confession settings.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        lock = self._thread_locks.setdefault(message.id, asyncio.Lock())
+        async with lock:
+            try:
+                # A public thread created from a message normally shares its ID.
+                thread = message.thread or interaction.guild.get_thread(message.id)
+                if thread is None:
+                    try:
+                        existing = await self.bot.fetch_channel(message.id)
+                        if isinstance(existing, discord.Thread):
+                            thread = existing
+                    except (discord.NotFound, discord.Forbidden):
+                        pass
+                if thread is None:
+                    number = message.embeds[0].title.rsplit("#", 1)[-1]
+                    thread = await message.create_thread(
+                        name=f"💜 Support for confession #{number}",
+                        auto_archive_duration=1440,
+                        reason="Support discussion for an anonymous confession",
+                    )
+                    await thread.send(
+                        "💜 This is a supportive space to discuss the confession. "
+                        "Please be kind, respect privacy, and follow the server rules. "
+                        "The original author remains anonymous.",
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                if thread.archived or thread.locked:
+                    # Archived threads may be reopened by users with appropriate permissions.
+                    try:
+                        if not thread.locked:
+                            await thread.edit(archived=False)
+                    except discord.HTTPException:
+                        pass
+                await interaction.followup.send(
+                    f"💬 Support discussion: {thread.mention}", ephemeral=True,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "I need **Create Public Threads**, **Send Messages in Threads**, and **Manage Threads** "
+                    "(if reopening locked threads) in the confession channel.", ephemeral=True,
+                )
+            except discord.HTTPException:
+                log.exception("Could not open confession thread for message %s", message.id)
+                await interaction.followup.send(
+                    "I couldn't open the support thread. Please ask a moderator to check thread permissions.",
+                    ephemeral=True,
+                )
 
     async def submit_confession(self, interaction: discord.Interaction, text: str):
         if interaction.guild_id is None:
@@ -188,7 +278,7 @@ class Confessions(commands.Cog):
                 )
                 try:
                     public_message = await channel.send(
-                        embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                        embed=embed, view=ConfessionButtons(self), allowed_mentions=discord.AllowedMentions.none()
                     )
                 except Exception:
                     audit.color = discord.Color.red()
