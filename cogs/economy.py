@@ -55,6 +55,9 @@ class Economy(commands.Cog):
             role_id BIGINT,
             active BOOLEAN NOT NULL DEFAULT TRUE
         )''')
+        # Safe migrations for shops created with earlier versions.
+        await db.execute("ALTER TABLE economy_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Plushies'")
+        await db.execute("ALTER TABLE economy_items ADD COLUMN IF NOT EXISTS image_url TEXT")
         await db.execute('''CREATE TABLE IF NOT EXISTS economy_inventory (
             guild_id BIGINT NOT NULL, user_id BIGINT NOT NULL,
             item_id BIGINT NOT NULL REFERENCES economy_items(item_id),
@@ -202,24 +205,52 @@ class Economy(commands.Cog):
         lines = [f'**{i}.** <@{r["user_id"]}> — {money(r["balance"])}' for i,r in enumerate(rows, 1)]
         await interaction.response.send_message('👑 **Palace Coin Leaderboard**\n' + '\n'.join(lines))
 
-    @app_commands.command(name='shop', description='Browse the Palace Shop')
+    async def shop_page(self, guild_id, category, page):
+        if category:
+            rows = await self.bot.db.fetch('''SELECT item_id,name,description,price,stock,category,image_url
+                FROM economy_items WHERE guild_id=$1 AND active=TRUE AND category=$2
+                ORDER BY price,item_id LIMIT 1 OFFSET $3''', guild_id, category, page)
+            total = await self.bot.db.fetchrow('''SELECT COUNT(*) AS n FROM economy_items
+                WHERE guild_id=$1 AND active=TRUE AND category=$2''', guild_id, category)
+        else:
+            rows = await self.bot.db.fetch('''SELECT item_id,name,description,price,stock,category,image_url
+                FROM economy_items WHERE guild_id=$1 AND active=TRUE
+                ORDER BY category,price,item_id LIMIT 1 OFFSET $2''', guild_id, page)
+            total = await self.bot.db.fetchrow('''SELECT COUNT(*) AS n FROM economy_items
+                WHERE guild_id=$1 AND active=TRUE''', guild_id)
+        return (rows[0] if rows else None), int(total['n'])
+
+    @app_commands.command(name='shop', description='Open the interactive Palace Shop')
     @app_commands.guild_only()
-    async def shop(self, interaction: discord.Interaction):
+    @app_commands.choices(category=[
+        app_commands.Choice(name='Plushies', value='Plushies'),
+        app_commands.Choice(name='Pets', value='Pets'),
+    ])
+    async def shop(self, interaction: discord.Interaction, category: str | None = None):
         if not await self.enabled(interaction): return
-        rows = await self.bot.db.fetch('''SELECT item_id,name,description,price,stock,role_id
-            FROM economy_items WHERE guild_id=$1 AND active=TRUE
-            ORDER BY price, item_id LIMIT 25''', interaction.guild_id)
-        if not rows:
-            await interaction.response.send_message('🛍️ The Palace Shop is empty. Check back later!')
+        view = PalaceShopView(self, interaction.user.id, interaction.guild_id, category)
+        embed = await view.render()
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name='shopitem', description='View a shop item and its picture')
+    @app_commands.guild_only()
+    async def shopitem(self, interaction: discord.Interaction,
+                       item_id: app_commands.Range[int, 1, 999999999]):
+        if not await self.enabled(interaction): return
+        item = await self.bot.db.fetchrow('''SELECT * FROM economy_items
+            WHERE guild_id=$1 AND item_id=$2 AND active=TRUE''', interaction.guild_id, item_id)
+        if not item:
+            await interaction.response.send_message('Item not found.', ephemeral=True)
             return
-        embed = discord.Embed(title='🛍️ Pillow Palace Shop', color=discord.Color.purple(),
-                              description='Use `/buy item_id:<number>` to purchase an item. Showing up to 25 items.')
-        for r in rows:
-            stock = 'Unlimited' if r['stock'] is None else str(r['stock'])
-            desc = r['description'] or 'A Palace collectible'
-            reward = ' • Discord role' if r['role_id'] else ''
-            embed.add_field(name=f'#{r["item_id"]} • {clean_name(r["name"])} — {money(r["price"])}',
-                            value=f'{clean_name(desc[:160])}\nStock: {stock}{reward}', inline=False)
+        embed = discord.Embed(title=f'#{item_id} • {clean_name(item["name"])}',
+                              description=clean_name(item['description'] or 'A Palace collectible'),
+                              color=discord.Color.purple())
+        embed.add_field(name='Price', value=money(item['price']))
+        embed.add_field(name='Category', value=item['category'])
+        embed.add_field(name='Stock', value='Unlimited' if item['stock'] is None else str(item['stock']))
+        if item['image_url']:
+            embed.set_image(url=item['image_url'])
+        embed.set_footer(text=f'Purchase with /buy item_id:{item_id}')
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name='inventory', description='View your collected Palace Shop items')
@@ -227,14 +258,14 @@ class Economy(commands.Cog):
     async def inventory(self, interaction: discord.Interaction, member: discord.Member | None = None):
         if not await self.enabled(interaction): return
         member = member or interaction.user
-        rows = await self.bot.db.fetch('''SELECT i.item_id,i.quantity,s.name
+        rows = await self.bot.db.fetch('''SELECT i.item_id,i.quantity,s.name,s.category
             FROM economy_inventory i JOIN economy_items s ON s.item_id=i.item_id
             WHERE i.guild_id=$1 AND i.user_id=$2 AND i.quantity>0
-            ORDER BY s.name LIMIT 40''', interaction.guild_id, member.id)
+            ORDER BY s.category,s.name LIMIT 40''', interaction.guild_id, member.id)
         if not rows:
             await interaction.response.send_message(f'🎒 {clean_name(member.display_name)} has no items yet.')
             return
-        lines = [f'• **{clean_name(r["name"])}** ×{r["quantity"]} (#{r["item_id"]})' for r in rows]
+        lines = [f'• **{clean_name(r["name"])}** ×{r["quantity"]} — {r["category"]} (#{r["item_id"]})' for r in rows]
         await interaction.response.send_message(f'🎒 **{clean_name(member.display_name)}’s Inventory**\n' + '\n'.join(lines))
 
     @app_commands.command(name='buy', description='Buy an item from the Palace Shop using its item ID')
@@ -352,40 +383,62 @@ class Economy(commands.Cog):
         await self.log(interaction.guild_id, member.id, 0, f'Admin set balance to {amount} by {interaction.user.id}')
         await interaction.response.send_message(f'Set {member.mention} balance to {money(amount)}.', ephemeral=True)
 
-    @shopsetup.command(name='add', description='Add a collectible or Discord role to the shop')
+    @shopsetup.command(name='add', description='Add a plushie or pet with optional picture')
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(category=[
+        app_commands.Choice(name='Plushies', value='Plushies'),
+        app_commands.Choice(name='Pets', value='Pets'),
+    ])
     async def shop_add(self, interaction: discord.Interaction, name: app_commands.Range[str, 1, 70],
-                       price: app_commands.Range[int, 1, 100000000],
+                       price: app_commands.Range[int, 1, 100000000], category: str,
                        description: app_commands.Range[str, 1, 250] = 'A Palace collectible',
                        stock: app_commands.Range[int, 0, 1000000] | None = None,
-                       role: discord.Role | None = None):
-        if role and (role.is_default() or role.managed):
-            await interaction.response.send_message('That role cannot be sold.', ephemeral=True)
-            return
-        if role and (not interaction.guild.me.guild_permissions.manage_roles or role >= interaction.guild.me.top_role):
-            await interaction.response.send_message('Move the bot role above the reward role and grant Manage Roles first.', ephemeral=True)
-            return
+                       picture: discord.Attachment | None = None):
+        image_url = None
+        if picture:
+            if not picture.content_type or not picture.content_type.startswith('image/'):
+                await interaction.response.send_message('Please attach an image (PNG, JPG, GIF or WebP).', ephemeral=True)
+                return
+            image_url = picture.url
         row = await self.bot.db.fetchrow('''INSERT INTO economy_items
-            (guild_id,name,description,price,stock,role_id) VALUES($1,$2,$3,$4,$5,$6)
-            RETURNING item_id''', interaction.guild_id, name, description, price, stock,
-            role.id if role else None)
-        await interaction.response.send_message(f'✅ Added **{clean_name(name)}** as shop item **#{row["item_id"]}**.', ephemeral=True)
+            (guild_id,name,description,price,stock,category,image_url)
+            VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING item_id''',
+            interaction.guild_id, name, description, price, stock, category, image_url)
+        await interaction.response.send_message(
+            f'✅ Added **{clean_name(name)}** to **{category}** as item **#{row["item_id"]}**.' +
+            (' Picture saved.' if image_url else ''), ephemeral=True)
 
-    @shopsetup.command(name='edit', description='Edit an existing shop item')
+    @shopsetup.command(name='edit', description='Edit a shop item including its category or picture')
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(category=[
+        app_commands.Choice(name='Plushies', value='Plushies'),
+        app_commands.Choice(name='Pets', value='Pets'),
+    ])
     async def shop_edit(self, interaction: discord.Interaction,
                         item_id: app_commands.Range[int, 1, 999999999],
                         name: app_commands.Range[str, 1, 70] | None = None,
                         price: app_commands.Range[int, 1, 100000000] | None = None,
                         description: app_commands.Range[str, 1, 250] | None = None,
+                        category: str | None = None,
+                        picture: discord.Attachment | None = None,
+                        remove_picture: bool = False,
                         active: bool | None = None):
+        image_url = None
+        if picture:
+            if not picture.content_type or not picture.content_type.startswith('image/'):
+                await interaction.response.send_message('Please attach an image (PNG, JPG, GIF or WebP).', ephemeral=True)
+                return
+            image_url = picture.url
         row = await self.bot.db.fetchrow('''UPDATE economy_items SET
             name=COALESCE($3,name), price=COALESCE($4,price),
-            description=COALESCE($5,description), active=COALESCE($6,active)
+            description=COALESCE($5,description), category=COALESCE($6,category),
+            image_url=CASE WHEN $8 THEN NULL ELSE COALESCE($7,image_url) END,
+            active=COALESCE($9,active)
             WHERE guild_id=$1 AND item_id=$2 RETURNING item_id''',
-            interaction.guild_id, item_id, name, price, description, active)
+            interaction.guild_id, item_id, name, price, description, category,
+            image_url, remove_picture, active)
         await interaction.response.send_message('✅ Shop item updated.' if row else 'Item not found.', ephemeral=True)
 
     @shopsetup.command(name='stock', description='Set item stock; -1 means unlimited')
@@ -434,6 +487,99 @@ class Economy(commands.Cog):
                 await interaction.response.send_message(message, ephemeral=True)
         except discord.HTTPException:
             pass
+
+
+class ShopCategorySelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(placeholder='🛍️ Choose a category', min_values=1, max_values=1,
+                         options=[
+                             discord.SelectOption(label='All Items', value='All', emoji='🛍️'),
+                             discord.SelectOption(label='Plushies', value='Plushies', emoji='🧸'),
+                             discord.SelectOption(label='Pets', value='Pets', emoji='🐾'),
+                         ], row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        view.category = None if self.values[0] == 'All' else self.values[0]
+        view.page = 0
+        await view.refresh(interaction)
+
+
+class PalaceShopView(discord.ui.View):
+    def __init__(self, cog, owner_id, guild_id, category=None):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.category = category
+        self.page = 0
+        self.item_id = None
+        self.item_available = False
+        self.message = None
+        self.add_item(ShopCategorySelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message('Open your own shop using `/shop` to browse and buy.', ephemeral=True)
+            return False
+        return True
+
+    async def render(self):
+        item, total = await self.cog.shop_page(self.guild_id, self.category, self.page)
+        if not item and total and self.page >= total:
+            self.page = total - 1
+            item, total = await self.cog.shop_page(self.guild_id, self.category, self.page)
+        self.item_id = int(item['item_id']) if item else None
+        self.item_available = bool(item and item['stock'] != 0)
+        self.previous.disabled = self.page <= 0
+        self.next.disabled = self.page + 1 >= total
+        self.purchase.disabled = not self.item_available
+        self.purchase.label = '🪙 Buy this item' if self.item_available else 'Unavailable'
+        if not item:
+            return discord.Embed(title='🛍️ Pillow Palace Shop',
+                                 description='No items in this category yet. Try another category!',
+                                 color=discord.Color.purple())
+        embed = discord.Embed(title=f'🛍️ {clean_name(item["name"])}',
+                              description=clean_name(item['description'] or 'A Palace collectible'),
+                              color=discord.Color.purple())
+        embed.add_field(name='Price', value=money(item['price']))
+        embed.add_field(name='Category', value=item['category'])
+        embed.add_field(name='Stock', value='Unlimited' if item['stock'] is None else str(item['stock']))
+        if item['image_url']:
+            embed.set_image(url=item['image_url'])
+        embed.set_footer(text=f'Item #{item["item_id"]} • {self.page+1}/{total} • Select a category or use the arrows')
+        return embed
+
+    async def refresh(self, interaction):
+        embed = await self.render()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label='Previous', emoji='◀️', style=discord.ButtonStyle.secondary, row=1)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        await self.refresh(interaction)
+
+    @discord.ui.button(label='Next', emoji='▶️', style=discord.ButtonStyle.secondary, row=1)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        await self.refresh(interaction)
+
+    @discord.ui.button(label='🪙 Buy this item', style=discord.ButtonStyle.success, row=1)
+    async def purchase(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.item_id is None:
+            await interaction.response.send_message('There is no item to purchase.', ephemeral=True)
+            return
+        # Existing /buy implementation handles stock, payment, refunds and inventory.
+        await self.cog.buy.callback(self.cog, interaction, self.item_id)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 async def setup(bot):
