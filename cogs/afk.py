@@ -126,7 +126,7 @@ class AFK(commands.Cog):
             "SELECT last_message, afk_since, reason FROM afk_members WHERE guild_id=$1 AND user_id=$2",
             interaction.guild.id, member.id,
         )
-         if not row:
+        if not row:
             msg = "No recorded message activity yet."
         else:
             now = datetime.now(timezone.utc)
