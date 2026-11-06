@@ -2,8 +2,10 @@
 import asyncio
 import calendar
 import logging
+import random
 from datetime import datetime, date, timezone, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 
 import discord
 from discord import app_commands
@@ -27,6 +29,69 @@ def next_birthday(day: int, month: int, today: date) -> date:
         if candidate >= today:
             return candidate
     return today
+
+
+def valid_gif_url(url: str) -> bool:
+    """Require a direct HTTPS GIF image URL (not a GIF hosting page)."""
+    try:
+        parsed = urlparse(url.strip())
+        return (parsed.scheme == 'https' and bool(parsed.hostname)
+                and parsed.path.lower().endswith('.gif')
+                and len(url) <= 1500)
+    except ValueError:
+        return False
+
+
+class BirthdayGifModal(discord.ui.Modal, title='Set Birthday GIF'):
+    gif_link = discord.ui.TextInput(
+        label='Direct HTTPS GIF link',
+        placeholder='https://media.giphy.com/media/EXAMPLE/giphy.gif',
+        max_length=1500,
+    )
+
+    def __init__(self, cog, guild_id: int, slot: int):
+        super().__init__()
+        self.cog = cog
+        self.guild_id = guild_id
+        self.slot = slot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        url = str(self.gif_link.value).strip()
+        if not valid_gif_url(url):
+            return await interaction.response.send_message(
+                'Use a direct HTTPS .gif image URL, not a GIPHY/Tenor/KLIPY webpage.',
+                ephemeral=True,
+            )
+        await self.cog.save_gif(self.guild_id, self.slot, url)
+        await interaction.response.send_message(
+            f'🎂 Birthday GIF slot **{self.slot}** saved. Use `/birthdaytest` to preview.', ephemeral=True)
+
+
+class BirthdayGifManager(discord.ui.View):
+    def __init__(self, cog, guild_id: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = guild_id
+        choices = [discord.SelectOption(label=f'Set GIF {i}', value=f'set:{i}') for i in range(1, 6)]
+        choices += [discord.SelectOption(label=f'Remove GIF {i}', value=f'remove:{i}') for i in range(1, 6)]
+        selector = discord.ui.Select(placeholder='Choose a GIF slot to set or remove', options=choices)
+        selector.callback = self.selected
+        self.add_item(selector)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.guild_id or not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message('Only server managers can edit birthday GIFs.', ephemeral=True)
+            return False
+        return True
+
+    async def selected(self, interaction: discord.Interaction):
+        action, slot_text = interaction.data['values'][0].split(':')
+        slot = int(slot_text)
+        if action == 'set':
+            await interaction.response.send_modal(BirthdayGifModal(self.cog, self.guild_id, slot))
+        else:
+            await self.cog.save_gif(self.guild_id, slot, None)
+            await interaction.response.send_message(f'Birthday GIF slot **{slot}** removed.', ephemeral=True)
 
 
 class BirthdaySetupView(discord.ui.View):
@@ -70,6 +135,12 @@ class BirthdaySetupView(discord.ui.View):
         await self.cog.bot.db.execute('UPDATE birthday_settings SET role_id=NULL WHERE guild_id=$1', self.guild_id)
         await interaction.response.send_message('Birthday role disabled.', ephemeral=True)
 
+    @discord.ui.button(label='Manage 5 Birthday GIFs', style=discord.ButtonStyle.success, row=2)
+    async def set_gif(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            'Select a slot to add, replace or remove a GIF:',
+            view=BirthdayGifManager(self.cog, self.guild_id), ephemeral=True)
+
 
 class Birthdays(commands.Cog):
     birthday = app_commands.Group(name='birthday', description='Birthday commands')
@@ -96,11 +167,118 @@ class Birthdays(commands.Cog):
                 celebration_year INTEGER NOT NULL,
                 PRIMARY KEY(guild_id,user_id,celebration_year)
             )''')
+        await self.bot.db.execute('ALTER TABLE birthday_settings ADD COLUMN IF NOT EXISTS gif_url TEXT')
+        await self.bot.db.execute('''
+            CREATE TABLE IF NOT EXISTS birthday_gifs (
+                guild_id BIGINT NOT NULL,
+                slot SMALLINT NOT NULL CHECK(slot BETWEEN 1 AND 5),
+                gif_url TEXT NOT NULL,
+                PRIMARY KEY(guild_id,slot)
+            )''')
+        # Preserve an existing single GIF as slot 1, but do not overwrite new settings.
+        await self.bot.db.execute('''
+            INSERT INTO birthday_gifs(guild_id,slot,gif_url)
+            SELECT guild_id,1,gif_url FROM birthday_settings
+            WHERE gif_url IS NOT NULL AND gif_url <> ''
+            ON CONFLICT(guild_id,slot) DO NOTHING
+        ''')
         self.ready.set()
         self.check_birthdays.start()
 
     def cog_unload(self):
         self.check_birthdays.cancel()
+
+    async def save_gif(self, guild_id: int, slot: int, url: str | None):
+        if not 1 <= slot <= 5:
+            raise ValueError('Birthday GIF slot must be between 1 and 5')
+        if url is None:
+            await self.bot.db.execute(
+                'DELETE FROM birthday_gifs WHERE guild_id=$1 AND slot=$2', guild_id, slot)
+        else:
+            await self.bot.db.execute('''
+                INSERT INTO birthday_gifs(guild_id,slot,gif_url) VALUES($1,$2,$3)
+                ON CONFLICT(guild_id,slot) DO UPDATE SET gif_url=EXCLUDED.gif_url
+            ''', guild_id, slot, url)
+        # Clear legacy setting so removing slot 1 stays removed on restart.
+        await self.bot.db.execute(
+            'UPDATE birthday_settings SET gif_url=NULL WHERE guild_id=$1', guild_id)
+
+    async def get_gifs(self, guild_id: int) -> dict[int, str]:
+        rows = await self.bot.db.fetch(
+            'SELECT slot,gif_url FROM birthday_gifs WHERE guild_id=$1 ORDER BY slot', guild_id)
+        return {row['slot']: row['gif_url'] for row in rows if valid_gif_url(row['gif_url'])}
+
+    async def random_gif(self, guild_id: int, slot: int | None = None) -> str | None:
+        gifs = await self.get_gifs(guild_id)
+        if slot is not None:
+            return gifs.get(slot)
+        return random.choice(list(gifs.values())) if gifs else None
+
+    @staticmethod
+    def birthday_embed(member: discord.Member, gif_url: str | None):
+        embed = discord.Embed(
+            title='🎉🎂 Happy Birthday!',
+            description=(f'Happy Birthday {member.mention}!\n\n'
+                         'Everyone at **Pillow Palace** wishes you a wonderful day! 💜'),
+            color=discord.Color.magenta(),
+        )
+        embed.set_footer(text='🎈 Have an amazing birthday!')
+        if gif_url and valid_gif_url(gif_url):
+            embed.set_image(url=gif_url)
+        return embed
+
+    @app_commands.command(name='birthdaygif', description='Set or remove one of five birthday GIFs (admin).')
+    @app_commands.describe(slot='GIF slot, from 1 to 5', url='Direct HTTPS .gif link; omit to remove the slot')
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def birthdaygif(self, interaction: discord.Interaction,
+                          slot: app_commands.Range[int, 1, 5], url: str | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message('Use this in a server.', ephemeral=True)
+        if url is not None:
+            url = url.strip()
+            if not valid_gif_url(url):
+                return await interaction.response.send_message(
+                    'Please use a direct HTTPS .gif image link, not a webpage.', ephemeral=True)
+        await self.save_gif(interaction.guild_id, slot, url)
+        await interaction.response.send_message(
+            f'🎂 Birthday GIF **{slot}** {"saved" if url else "removed"}.', ephemeral=True)
+
+    @app_commands.command(name='birthdaytest', description='Preview a random or selected birthday GIF (admin).')
+    @app_commands.describe(member='Member to feature (defaults to you)',
+                           slot='Optional GIF slot 1–5; omit for random selection')
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def birthdaytest(self, interaction: discord.Interaction,
+                           member: discord.Member | None = None,
+                           slot: app_commands.Range[int, 1, 5] | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message('Use this in a server.', ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        settings = await self.bot.db.fetchrow(
+            'SELECT channel_id FROM birthday_settings WHERE guild_id=$1', interaction.guild_id)
+        if not settings or not settings['channel_id']:
+            return await interaction.followup.send(
+                'Set an announcement channel with `/birthdaysetup` first.', ephemeral=True)
+        channel = interaction.guild.get_channel(settings['channel_id'])
+        if not isinstance(channel, discord.TextChannel):
+            return await interaction.followup.send('The birthday channel is missing.', ephemeral=True)
+        gifs = await self.get_gifs(interaction.guild_id)
+        if slot is not None and slot not in gifs:
+            return await interaction.followup.send(f'GIF slot {slot} is empty.', ephemeral=True)
+        gif_url = gifs[slot] if slot is not None else (random.choice(list(gifs.values())) if gifs else None)
+        target = member or interaction.user
+        try:
+            await channel.send(
+                embed=self.birthday_embed(target, gif_url),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            log.exception('Birthday test announcement failed in guild %s', interaction.guild_id)
+            return await interaction.followup.send('Cannot post in the birthday channel.', ephemeral=True)
+        await interaction.followup.send(
+            f'🎂 Test posted in {channel.mention} ({"selected slot" if slot else "random GIF"}). '
+            'No birthdays or roles were changed.', ephemeral=True)
 
     @birthday.command(name='set', description='Set your birthday (year optional).')
     @app_commands.describe(day='Day of month', month='Month number', year='Optional birth year')
@@ -170,6 +348,9 @@ class Birthdays(commands.Cog):
         embed.add_field(name='Announcement channel', value=f'<#{row["channel_id"]}>' if row['channel_id'] else 'Not set')
         embed.add_field(name='Birthday role', value=f'<@&{row["role_id"]}>' if row['role_id'] else 'None')
         embed.add_field(name='Announcements', value='Enabled' if row['enabled'] else 'Disabled')
+        gifs = await self.get_gifs(interaction.guild_id)
+        embed.add_field(name='Birthday GIFs', value=f'{len(gifs)}/5 configured • Slots: ' + (', '.join(map(str, gifs)) if gifs else 'None'))
+        embed.description += '\n\nManage GIF slots below or with `/birthdaygif`. Each birthday picks a random configured GIF. Preview with `/birthdaytest`.'
         await interaction.response.send_message(embed=embed, view=BirthdaySetupView(self, interaction.guild_id), ephemeral=True)
 
     @tasks.loop(minutes=1)
@@ -224,7 +405,7 @@ class Birthdays(commands.Cog):
                 if not inserted:
                     continue
                 try:
-                    await channel.send(f'🎉🎂 Happy Birthday {member.mention}! Everyone at **Pillow Palace** wishes you a wonderful day! 💜', allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
+                    await channel.send(embed=self.birthday_embed(member, await self.random_gif(guild.id)), allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
                 except (discord.Forbidden, discord.HTTPException):
                     await self.bot.db.execute('DELETE FROM birthday_announcements WHERE guild_id=$1 AND user_id=$2 AND celebration_year=$3', guild.id, member.id, today.year)
                     log.warning('Could not announce birthday for %s', member.id)
