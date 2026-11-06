@@ -95,5 +95,5 @@ class AFK(commands.Cog):
             log.exception("Failed to set AFK")
             await interaction.followup.send("Couldn't save your AFK status.", ephemeral=True)
             
-    async def setup(bot: commands.Bot):
-        await bot.add_cog(AFK(bot))
+async def setup(bot: commands.Bot):
+    await bot.add_cog(AFK(bot))
