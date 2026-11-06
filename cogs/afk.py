@@ -1,4 +1,4 @@
-"""Pillow Palace AFK and chat-activity dashboard (discord.py 2.x).
+"""Pillow Palace AFK, Discord presence and chat-activity dashboard (discord.py 2.x).
 
 Requires bot.db.execute(query, *args), bot.db.fetch(query, *args), and
 bot.db.fetchrow(query, *args), backed by PostgreSQL/asyncpg.
@@ -25,6 +25,7 @@ class AFK(commands.Cog):
         self._ready = asyncio.Event()
         self._update_lock = asyncio.Lock()
         self._pending_updates = {}
+        self._initialise_task = None
 
     async def cog_load(self):
         await self.bot.db.execute("""
@@ -45,15 +46,108 @@ class AFK(commands.Cog):
                 message_id BIGINT
             )
         """)
+        await self.bot.db.execute("""
+            CREATE TABLE IF NOT EXISTS afk_initialized (
+                guild_id BIGINT PRIMARY KEY,
+                initialised_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
         self._ready.set()
+        self._initialise_task = asyncio.create_task(self._initialise_members())
         if not self.refresh_dashboards.is_running():
             self.refresh_dashboards.start()
 
     def cog_unload(self):
         self.refresh_dashboards.cancel()
+        if self._initialise_task:
+            self._initialise_task.cancel()
         for task in self._pending_updates.values():
             task.cancel()
         self._pending_updates.clear()
+
+    async def _server_members(self, guild: discord.Guild):
+        """Retrieve members; full server enumeration requires Members intent."""
+        if self.bot.intents.members:
+            try:
+                return [m async for m in guild.fetch_members(limit=None) if not m.bot], True
+            except (discord.Forbidden, discord.HTTPException):
+                log.exception("Could not fetch full member list for %s", guild.id)
+        return [m for m in guild.members if not m.bot], False
+
+    async def _seed_members(self, guild: discord.Guild, reset: bool = False):
+        members, complete = await self._server_members(guild)
+        if not members:
+            return 0, complete
+        now = datetime.now(timezone.utc)
+        for member in members:
+            if reset:
+                await self.bot.db.execute("""
+                    INSERT INTO afk_members (guild_id, user_id, last_message, afk_since, reason, manual)
+                    VALUES ($1, $2, $3, NULL, NULL, FALSE)
+                    ON CONFLICT (guild_id, user_id) DO UPDATE SET
+                        last_message=$3, afk_since=NULL, reason=NULL, manual=FALSE
+                """, guild.id, member.id, now)
+            else:
+                await self.bot.db.execute("""
+                    INSERT INTO afk_members (guild_id, user_id, last_message)
+                    VALUES ($1, $2, $3) ON CONFLICT (guild_id, user_id) DO NOTHING
+                """, guild.id, member.id, now)
+        self.schedule_dashboard_update(guild.id)
+        return len(members), complete
+
+    async def _initialise_members(self):
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            try:
+                existing = await self.bot.db.fetchrow(
+                    "SELECT guild_id FROM afk_initialized WHERE guild_id=$1", guild.id
+                )
+                count, complete = await self._seed_members(guild, reset=not bool(existing))
+                # Only mark initialisation complete if all members were retrieved.
+                if complete and not existing:
+                    await self.bot.db.execute("""
+                        INSERT INTO afk_initialized (guild_id) VALUES ($1)
+                        ON CONFLICT (guild_id) DO NOTHING
+                    """, guild.id)
+                log.info("AFK seeded %s members for %s (complete=%s)", count, guild.id, complete)
+            except Exception:
+                log.exception("AFK member initialisation failed for %s", guild.id)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        if not member.bot and self._ready.is_set():
+            await self.bot.db.execute("""
+                INSERT INTO afk_members (guild_id, user_id, last_message)
+                VALUES ($1, $2, $3) ON CONFLICT (guild_id, user_id) DO NOTHING
+            """, member.guild.id, member.id, datetime.now(timezone.utc))
+            self.schedule_dashboard_update(member.guild.id)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        await self.bot.db.execute(
+            "DELETE FROM afk_members WHERE guild_id=$1 AND user_id=$2",
+            member.guild.id, member.id,
+        )
+        self.schedule_dashboard_update(member.guild.id)
+
+    @app_commands.command(name="afkreset", description="Mark all server members active now (admin only).")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def afkreset(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            count, complete = await self._seed_members(interaction.guild, reset=True)
+            await interaction.followup.send(
+                f"🟢 Marked **{count}** members active now. "
+                + ("They will become AFK after 30 minutes without a message."
+                   if complete else "⚠️ This is only the cached member list. Enable Server Members Intent in Discord Developer Portal and in your bot's intents for everyone."),
+                ephemeral=True,
+            )
+        except Exception:
+            log.exception("AFK reset failed")
+            await interaction.followup.send("Could not reset member activity; check bot logs.", ephemeral=True)
 
     def schedule_dashboard_update(self, guild_id: int):
         """Coalesce bursts of activity into one Discord message edit."""
@@ -80,6 +174,27 @@ class AFK(commands.Cog):
         if value is None:
             return None
         return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member):
+        """Refresh when Discord presence changes; no database write needed."""
+        if not self._ready.is_set() or after.bot:
+            return
+        if before.status != after.status:
+            self.schedule_dashboard_update(after.guild.id)
+
+    @staticmethod
+    def _presence(member: discord.Member | None, enabled: bool):
+        if not enabled or member is None:
+            return "⚪ Unknown", "unknown"
+        status = member.status
+        if status == discord.Status.online:
+            return "🟢 Online", "online"
+        if status == discord.Status.idle:
+            return "🌙 Idle", "idle"
+        if status == discord.Status.dnd:
+            return "⛔ DND", "dnd"
+        return "⚫ Offline", "offline"
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -167,7 +282,11 @@ class AFK(commands.Cog):
                     msg += f" Reason: {discord.utils.escape_markdown(row['reason'])}"
             else:
                 msg = f"🟢 Active in chat; last message <t:{int(last.timestamp())}:R>."
-        await interaction.followup.send(f"**{member.display_name}**: {msg}", ephemeral=True)
+        presence, _ = self._presence(member, self.bot.intents.presences)
+        await interaction.followup.send(
+            f"**{member.display_name}**\nDiscord: {presence}\nChat: {msg}",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="afksetup", description="Set the AFK dashboard's text channel (admin only).")
     @app_commands.describe(channel="Channel to host the automatically updated AFK dashboard")
@@ -210,7 +329,7 @@ class AFK(commands.Cog):
         active = sum(1 for r in rows if r["afk_since"] is None and now - self._utc(r["last_message"]) < AFK_AFTER)
         await interaction.response.send_message(
             f"🟢 Active: **{active}** | 🌙 AFK: **{len(rows)-active}** | Tracked: **{len(rows)}**\n"
-            "Based on messages sent in this server, not Discord presence.", ephemeral=True,
+            "Chat activity is separate from Discord online presence.", ephemeral=True,
         )
 
     @tasks.loop(seconds=REFRESH_SECONDS)
@@ -250,29 +369,45 @@ class AFK(commands.Cog):
             """, guild_id)
             now = datetime.now(timezone.utc)
             active, afk = [], []
+            presence_counts = {"online": 0, "idle": 0, "dnd": 0, "offline": 0, "unknown": 0}
+            presence_enabled = self.bot.intents.presences
             for r in rows:
                 member = guild.get_member(r["user_id"])
-                if member is None:
-                    continue  # do not show users who are no longer cached in the server
+                # With members intent, a cache miss is not proof someone left.
+                # Show them with unknown presence rather than hiding them.
+                label, presence_key = self._presence(member, presence_enabled)
+                presence_counts[presence_key] += 1
                 last = self._utc(r["last_message"])
                 since = self._utc(r["afk_since"])
                 if since or now - last >= AFK_AFTER:
                     start = since or last + AFK_AFTER
                     reason = (r["reason"] or "")[:60]
                     extra = f" — {discord.utils.escape_markdown(reason)}" if reason else ""
-                    afk.append(f"{member.mention} — <t:{int(start.timestamp())}:R>{extra}")
+                    afk.append(f"<@{r['user_id']}> — {label} — AFK <t:{int(start.timestamp())}:R>{extra}")
                 else:
-                    active.append(f"{member.mention} — <t:{int(last.timestamp())}:R>")
+                    active.append(f"<@{r['user_id']}> — {label} — last chat <t:{int(last.timestamp())}:R>")
             embed = discord.Embed(
                 title="🌙 Pillow Palace | Member Activity",
-                description="Based on messages sent in this server, not Discord online status. Members appear after their first tracked message.",
+                description=(
+                    "**Discord presence** and **server chat activity** are separate. "
+                    "Online members can still be AFK in chat.\n"
+                    + (
+                        f"🟢 Online: **{presence_counts['online']}**  |  "
+                        f"🌙 Idle: **{presence_counts['idle']}**  |  "
+                        f"⛔ DND: **{presence_counts['dnd']}**  |  "
+                        f"⚫ Offline: **{presence_counts['offline']}**  |  "
+                        f"⚪ Unknown: **{presence_counts['unknown']}**"
+                        if presence_enabled else
+                        "⚠️ Presence Intent is disabled: Discord statuses unavailable."
+                    )
+                ),
                 colour=discord.Colour.blurple(),
             )
-            embed.add_field(name=f"🟢 Active ({len(active)})", value=("\n".join(active[:MAX_LINES])[:1000] or "None"), inline=False)
-            embed.add_field(name=f"🌙 AFK ({len(afk)})", value=("\n".join(afk[:MAX_LINES])[:1000] or "None"), inline=False)
+            embed.add_field(name=f"💬 Chat Active ({len(active)})", value=("\n".join(active[:MAX_LINES])[:1000] or "None"), inline=False)
+            embed.add_field(name=f"🌙 Chat AFK ({len(afk)})", value=("\n".join(afk[:MAX_LINES])[:1000] or "None"), inline=False)
             if len(active) > MAX_LINES or len(afk) > MAX_LINES:
-                embed.add_field(name="More members", value="Use `/activity` for totals or `/afkstatus` for a member's status.", inline=False)
-            embed.set_footer(text="Updates on activity (about 3s) • checks every 15s • AFK after 30m")
+                embed.add_field(name="More members", value="Only the first 18 of each chat group are shown. Use `/activity` for totals or `/afkstatus` for an individual.", inline=False)
+            embed.set_footer(text="Presence changes and chat activity: ~3s • automatic AFK checks: 15s • chat AFK after 30m")
             msg = None
             if config["message_id"]:
                 try:
