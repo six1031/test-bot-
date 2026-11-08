@@ -198,6 +198,11 @@ class CoinFlip(GameView):
                 self.close()
                 return await interaction.followup.send('Reward failed; stake refunded.', ephemeral=True)
             self.close()
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except discord.HTTPException:
+                    pass
             await interaction.followup.send(f'🪙 **{outcome}!** You chose {choice}. ' +
                 (f'You won {coins(amount)} profit!' if won else f'You lost {coins(amount)}.'), ephemeral=True)
 
@@ -227,6 +232,11 @@ class Dice(GameView):
                 self.close()
                 return await interaction.followup.send('Reward failed; stake refunded.', ephemeral=True)
             self.close()
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except discord.HTTPException:
+                    pass
             result = f'Won {coins(amount)} profit!' if player > bot else ('Tie — stake returned.' if player == bot else f'Lost {coins(amount)}.')
             await interaction.followup.send(f'🎲 You rolled **{player}**, bot rolled **{bot}**. {result}', ephemeral=True)
 
@@ -340,9 +350,11 @@ class Trivia(GameView):
                 self.index += 1
                 if self.index == 5:
                     reward = self.correct*20 + (100 if self.correct == 5 else 0)
+                    await interaction.response.defer()
                     if reward:
                         await self.cog.credit(self.guild_id, self.owner, reward, 'Arcade trivia')
-                    return await self.finish(interaction, f'❓ Finished! {self.correct}/5 correct. Earned {coins(reward)}.')
+                    self.close()
+                    return await interaction.edit_original_response(content=f'❓ Finished! {self.correct}/5 correct. Earned {coins(reward)}.', view=self)
                 await interaction.response.edit_message(content=('✅ Correct!\n\n' if correct else '❌ Incorrect!\n\n')+self.prompt(), view=self)
         return cb
 
@@ -448,25 +460,22 @@ class PalaceMinigames(commands.Cog):
             self.bot.loop.create_task(self.reposition(guild_id))
 
     async def start_game(self, interaction, key):
-        if interaction.guild_id is None:
-            return await interaction.response.send_message('Use this in a server.', ephemeral=True)
-        settings = await self.bot.db.fetchrow('SELECT channel_id FROM palace_arcade_settings WHERE guild_id=$1', interaction.guild_id)
-        if not settings or interaction.channel_id != settings['channel_id']:
-            return await interaction.response.send_message('Use the dedicated arcade channel to play.', ephemeral=True)
-        # Switching games is allowed immediately. End the previous private session.
-        old_view = self.sessions.get((interaction.guild_id, interaction.user.id))
-        if old_view is not None:
-            old_view.close()
-            if old_view.message is not None:
-                try:
-                    await old_view.message.edit(content='🔄 You switched games. This session is closed.', embed=None, view=old_view)
-                except (discord.HTTPException, discord.NotFound):
-                    pass
-        economy = self.economy()
-        s = await economy.settings(interaction.guild_id)
-        if not s['enabled']:
-            return await interaction.response.send_message('The economy is disabled.', ephemeral=True)
+        # Discord requires an acknowledgement within 3 seconds. Always acknowledge
+        # the PUBLIC launcher interaction before any database or network calls.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        view = None
         try:
+            if interaction.guild_id is None:
+                return await interaction.followup.send('Use this in a server.', ephemeral=True)
+            settings = await self.bot.db.fetchrow(
+                'SELECT channel_id FROM palace_arcade_settings WHERE guild_id=$1',
+                interaction.guild_id)
+            if not settings or interaction.channel_id != settings['channel_id']:
+                return await interaction.followup.send('Use the dedicated arcade channel to play.', ephemeral=True)
+            economy = self.economy()
+            settings = await economy.settings(interaction.guild_id)
+            if not settings['enabled']:
+                return await interaction.followup.send('The economy is disabled.', ephemeral=True)
             if key == 'treasure': view = Treasure(self, interaction)
             elif key == 'coinflip': view = CoinFlip(self, interaction)
             elif key == 'dice': view = Dice(self, interaction)
@@ -478,29 +487,45 @@ class PalaceMinigames(commands.Cog):
                     WHERE guild_id=$1 AND active=TRUE AND category='Plushies'
                     AND (stock IS NULL OR stock>0) ORDER BY item_id LIMIT 25''', interaction.guild_id)
                 if not items:
-                    return await interaction.response.send_message('No plushies are available in the shop yet.', ephemeral=True)
+                    return await interaction.followup.send('No plushies are available in the shop yet.', ephemeral=True)
                 view = Claw(self, interaction, items)
             else:
-                return await interaction.response.send_message('Unknown game.', ephemeral=True)
+                return await interaction.followup.send('Unknown game.', ephemeral=True)
+
+            descriptions = {
+                'treasure': 'Choose one of three treasure chests.',
+                'coinflip': 'Choose heads or tails, then enter a stake of 10–250 coins.',
+                'dice': 'Roll against the bot with a stake of 10–250 coins.',
+                'claw': 'Each attempt costs 50 coins. Pick a shop plushie to grab (35% chance).',
+                'memory': 'Find all eight pairs. Fewer attempts earn more coins.',
+                'trivia': 'Choose a category and answer five questions.',
+                'higherlower': f'Current number: **{view.number}**. Guess higher or lower, or cash out.',
+            }
+            # A follow-up with wait=True gives us the actual private game message.
+            # original_response() here would refer to the launcher deferral instead.
+            message = await interaction.followup.send(
+                f'**{GAMES[key][0]}**\n{descriptions[key]}\n\n'
+                'You can switch games any time from the arcade panel. '
+                'Session expires after 15 minutes of inactivity.',
+                view=view, ephemeral=True, wait=True)
+            view.message = message
+            # Only close the previous session AFTER the new game is displayed.
+            old_view = self.sessions.get((interaction.guild_id, interaction.user.id))
             self.sessions[(interaction.guild_id, interaction.user.id)] = view
-            desc = {
-                'treasure':'Choose one of three treasure chests.',
-                'coinflip':'Choose heads or tails, then enter a stake of 10–250 coins.',
-                'dice':'Roll against the bot with a stake of 10–250 coins.',
-                'claw':'Each attempt costs 50 coins. Pick a shop plushie to grab (35% chance).',
-                'memory':'Find all eight pairs. Fewer attempts earn more coins.',
-                'trivia':'Choose a category and answer five questions.',
-                'higherlower':f'Current number: **{view.number}**. Guess higher or lower, or cash out.',
-            }[key]
-            await interaction.response.send_message(f'**{GAMES[key][0]}**\n{desc}\n\nYou can switch games at any time using the arcade panel. Session expires after 15 minutes of inactivity.', view=view, ephemeral=True)
+            if old_view is not None and old_view is not view:
+                old_view.close()
+                # Do not await editing the old ephemeral message here: that can
+                # delay interaction responses and may fail after token expiry.
+        except Exception:
+            LOG.exception('Arcade failed to launch game %s for user %s', key, interaction.user.id)
+            if view is not None:
+                view.close()
             try:
-                view.message = await interaction.original_response()
+                await interaction.followup.send(
+                    '⚠️ This game could not start. Please try again or contact staff.',
+                    ephemeral=True)
             except discord.HTTPException:
                 pass
-        except Exception:
-            if 'view' in locals():
-                view.close()
-            raise
 
     @app_commands.command(name='arcadesetup', description='Set up or repair the Pillow Palace Arcade panel')
     @app_commands.guild_only()
@@ -540,7 +565,7 @@ class PalaceMinigames(commands.Cog):
         if row and row['channel_id'] == message.channel.id:
             self.panel_dirty.add(message.guild.id)
             if not any(g == message.guild.id for g,_ in self.sessions):
-                await self.reposition(message.guild.id)
+                asyncio.create_task(self.reposition(message.guild.id))
 
     async def reposition(self, guild_id):
         if any(g == guild_id for g,_ in self.sessions):
