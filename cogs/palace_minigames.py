@@ -457,7 +457,7 @@ class PalaceMinigames(commands.Cog):
         if self.sessions.get((guild_id, user_id)) is view:
             del self.sessions[(guild_id, user_id)]
         if not any(g == guild_id for g, _ in self.sessions):
-            self.bot.loop.create_task(self.reposition(guild_id))
+            asyncio.create_task(self.reposition(guild_id))
 
     async def start_game(self, interaction, key):
         # Discord requires an acknowledgement within 3 seconds. Always acknowledge
@@ -499,15 +499,16 @@ class PalaceMinigames(commands.Cog):
                 'claw': 'Each attempt costs 50 coins. Pick a shop plushie to grab (35% chance).',
                 'memory': 'Find all eight pairs. Fewer attempts earn more coins.',
                 'trivia': 'Choose a category and answer five questions.',
-                'higherlower': f'Current number: **{view.number}**. Guess higher or lower, or cash out.',
+                'higherlower': 'Guess higher or lower, or cash out.',
             }
-            # A follow-up with wait=True gives us the actual private game message.
-            # original_response() here would refer to the launcher deferral instead.
-            message = await interaction.followup.send(
+            if key == 'higherlower':
+                descriptions[key] = f'Current number: **{view.number}**. Guess higher or lower, or cash out.'
+            # Edit the deferred ephemeral response itself so there is no stuck loading message.
+            message = await interaction.edit_original_response(
                 f'**{GAMES[key][0]}**\n{descriptions[key]}\n\n'
                 'You can switch games any time from the arcade panel. '
                 'Session expires after 15 minutes of inactivity.',
-                view=view, ephemeral=True, wait=True)
+                view=view)
             view.message = message
             # Only close the previous session AFTER the new game is displayed.
             old_view = self.sessions.get((interaction.guild_id, interaction.user.id))
@@ -521,9 +522,8 @@ class PalaceMinigames(commands.Cog):
             if view is not None:
                 view.close()
             try:
-                await interaction.followup.send(
-                    '⚠️ This game could not start. Please try again or contact staff.',
-                    ephemeral=True)
+                await interaction.edit_original_response(
+                    content='⚠️ This game could not start. Check Railway logs for the error.', view=None)
             except discord.HTTPException:
                 pass
 
