@@ -82,8 +82,21 @@ class ArcadePanel(discord.ui.View):
         self.add_item(select)
 
     async def choose(self, interaction):
-        key = self.children[0].values[0]
+        key = interaction.data['values'][0]
         await self.cog.start_game(interaction, key)
+
+
+class ReplayView(discord.ui.View):
+    """Offer another round without returning to the public arcade panel."""
+    def __init__(self, cog, owner, key):
+        super().__init__(timeout=900)
+        self.cog, self.owner, self.key = cog, owner, key
+
+    @discord.ui.button(label='Play Again', emoji='🔁', style=discord.ButtonStyle.success)
+    async def play_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner:
+            return await interaction.response.send_message('This is someone else’s game.', ephemeral=True)
+        await self.cog.start_game(interaction, self.key)
 
 
 class GameView(discord.ui.View):
@@ -127,7 +140,22 @@ class GameView(discord.ui.View):
 
     async def finish(self, interaction, content):
         self.close()
-        await interaction.response.edit_message(content=content, embed=None, view=self)
+        await interaction.response.edit_message(
+            content=content + '\n\n🔁 Ready for another round?', embed=None,
+            view=ReplayView(self.cog, self.owner, self.key))
+
+    async def finish_deferred(self, interaction, content):
+        self.close()
+        await interaction.edit_original_response(
+            content=content + '\n\n🔁 Ready for another round?', embed=None,
+            view=ReplayView(self.cog, self.owner, self.key))
+
+    async def finish_modal(self, content):
+        self.close()
+        if self.message:
+            await self.message.edit(
+                content=content + '\n\n🔁 Ready for another round?', embed=None,
+                view=ReplayView(self.cog, self.owner, self.key))
 
 
 class Treasure(GameView):
@@ -147,8 +175,7 @@ class Treasure(GameView):
                 await interaction.response.defer()
                 if reward:
                     await self.cog.credit(self.guild_id, self.owner, reward, 'Arcade treasure')
-                self.close()
-                await interaction.edit_original_response(content=f'🎁 Chest **{i+1}** contained {coins(reward)} Palace Coins!', view=self)
+                await self.finish_deferred(interaction, f'🎁 Chest **{i+1}** contained {coins(reward)} Palace Coins!')
         return cb
 
 
@@ -197,14 +224,9 @@ class CoinFlip(GameView):
                 await self.cog.credit(self.guild_id, self.owner, amount, 'Arcade coin flip refund')
                 self.close()
                 return await interaction.followup.send('Reward failed; stake refunded.', ephemeral=True)
-            self.close()
-            if self.message:
-                try:
-                    await self.message.edit(view=self)
-                except discord.HTTPException:
-                    pass
-            await interaction.followup.send(f'🪙 **{outcome}!** You chose {choice}. ' +
-                (f'You won {coins(amount)} profit!' if won else f'You lost {coins(amount)}.'), ephemeral=True)
+            await self.finish_modal(f'🪙 **{outcome}!** You chose {choice}. ' +
+                (f'You won {coins(amount)} profit!' if won else f'You lost {coins(amount)}.'))
+            await interaction.followup.send('Round complete — use **Play Again** on your game message.', ephemeral=True)
 
 
 class Dice(GameView):
@@ -231,14 +253,9 @@ class Dice(GameView):
                 await self.cog.credit(self.guild_id, self.owner, amount, 'Arcade dice refund')
                 self.close()
                 return await interaction.followup.send('Reward failed; stake refunded.', ephemeral=True)
-            self.close()
-            if self.message:
-                try:
-                    await self.message.edit(view=self)
-                except discord.HTTPException:
-                    pass
             result = f'Won {coins(amount)} profit!' if player > bot else ('Tie — stake returned.' if player == bot else f'Lost {coins(amount)}.')
-            await interaction.followup.send(f'🎲 You rolled **{player}**, bot rolled **{bot}**. {result}', ephemeral=True)
+            await self.finish_modal(f'🎲 You rolled **{player}**, bot rolled **{bot}**. {result}')
+            await interaction.followup.send('Round complete — use **Play Again** on your game message.', ephemeral=True)
 
 
 class Claw(GameView):
@@ -267,11 +284,9 @@ class Claw(GameView):
                 except Exception:
                     LOG.exception('Claw inventory award failed')
                     await self.cog.credit(self.guild_id, self.owner, 50, 'Claw error refund')
-                    self.close()
-                    return await interaction.edit_original_response(content='Could not award the plushie; your coins were refunded.', view=self)
-            self.close()
-            await interaction.edit_original_response(content=(f'🧸 You grabbed **{discord.utils.escape_markdown(item["name"])}**! Added to your inventory.'
-                if won else '🧸 The claw slipped! No plushie this time.'), view=self)
+                    return await self.finish_deferred(interaction, 'Could not award the plushie; your coins were refunded.')
+            await self.finish_deferred(interaction, (f'🧸 You grabbed **{discord.utils.escape_markdown(item["name"])}**! Added to your inventory.'
+                if won else '🧸 The claw slipped! No plushie this time.'))
 
 
 class Memory(GameView):
@@ -310,8 +325,7 @@ class Memory(GameView):
                     if len(self.matched) == 16:
                         reward = 150 if self.attempts <= 12 else 100 if self.attempts <= 18 else 50
                         await self.cog.credit(self.guild_id, self.owner, reward, 'Arcade memory match')
-                        self.close()
-                        return await interaction.edit_original_response(content=f'🧠 All pairs found in {self.attempts} attempts! Earned {coins(reward)}.', view=self)
+                        return await self.finish_deferred(interaction, f'🧠 All pairs found in {self.attempts} attempts! Earned {coins(reward)}.')
                     self.draw()
                     return await interaction.edit_original_response(content=f'✅ Match! {len(self.matched)//2}/8 pairs found.', view=self)
                 self.draw()
@@ -328,7 +342,13 @@ class Trivia(GameView):
         self.add_item(select)
 
     async def category(self, interaction):
-        self.questions = RNG.sample(QUESTIONS[self.children[1].values[0]], 5)
+        category = interaction.data['values'][0]
+        self.questions = []
+        for question, answers, correct_index in RNG.sample(QUESTIONS[category], 5):
+            correct_answer = answers[correct_index]
+            shuffled_answers = list(answers)
+            RNG.shuffle(shuffled_answers)
+            self.questions.append((question, shuffled_answers, shuffled_answers.index(correct_answer)))
         self.remove_item(self.children[1])
         for i in range(4):
             b = discord.ui.Button(label=str(i+1), row=0)
@@ -353,8 +373,7 @@ class Trivia(GameView):
                     await interaction.response.defer()
                     if reward:
                         await self.cog.credit(self.guild_id, self.owner, reward, 'Arcade trivia')
-                    self.close()
-                    return await interaction.edit_original_response(content=f'❓ Finished! {self.correct}/5 correct. Earned {coins(reward)}.', view=self)
+                    return await self.finish_deferred(interaction, f'❓ Finished! {self.correct}/5 correct. Earned {coins(reward)}.')
                 await interaction.response.edit_message(content=('✅ Correct!\n\n' if correct else '❌ Incorrect!\n\n')+self.prompt(), view=self)
         return cb
 
@@ -381,8 +400,7 @@ class HigherLower(GameView):
             if reward:
                 await interaction.response.defer()
                 await self.cog.credit(self.guild_id, self.owner, reward, 'Arcade higher/lower cashout')
-                self.close()
-                await interaction.edit_original_response(content=f'💰 Cashed out {coins(reward)} after {self.streak} correct guesses!', view=self)
+                await self.finish_deferred(interaction, f'💰 Cashed out {coins(reward)} after {self.streak} correct guesses!')
             else:
                 await self.finish(interaction, 'You left with no coins. See you next time!')
 
@@ -400,8 +418,7 @@ class HigherLower(GameView):
             if self.streak == 5:
                 await interaction.response.defer()
                 await self.cog.credit(self.guild_id, self.owner, 200, 'Arcade higher/lower 5 streak')
-                self.close()
-                return await interaction.edit_original_response(content=f'🏆 Five correct guesses! Earned {coins(200)}!', view=self)
+                return await self.finish_deferred(interaction, f'🏆 Five correct guesses! Earned {coins(200)}!')
             await interaction.response.edit_message(content=f'✅ It was **{new}** (previously {old})!\nStreak: **{self.streak}** • Cash out {coins(self.REWARDS[self.streak])} or guess again.\nCurrent number: **{new}**', view=self)
 
 
