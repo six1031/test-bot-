@@ -15,13 +15,13 @@ from discord.ext import commands, tasks
 LOG = logging.getLogger(__name__)
 RNG = random.SystemRandom()
 GAMES = {
-    'treasure': ('🗝️ Treasure Hunt', 600),
-    'coinflip': ('🪙 Coin Flip', 60),
-    'claw': ('🧸 Claw Machine', 180),
-    'memory': ('🧠 Memory Match', 600),
-    'trivia': ('❓ Trivia', 300),
-    'higherlower': ('🔢 Higher or Lower', 300),
-    'dice': ('🎲 Dice Duel', 120),
+    'treasure': ('🗝️ Treasure Hunt', 0),
+    'coinflip': ('🪙 Coin Flip', 0),
+    'claw': ('🧸 Claw Machine', 0),
+    'memory': ('🧠 Memory Match', 0),
+    'trivia': ('❓ Trivia', 0),
+    'higherlower': ('🔢 Higher or Lower', 0),
+    'dice': ('🎲 Dice Duel', 0),
 }
 QUESTIONS = {
     'Animals': [
@@ -404,9 +404,6 @@ class PalaceMinigames(commands.Cog):
     async def cog_load(self):
         await self.bot.db.execute('''CREATE TABLE IF NOT EXISTS palace_arcade_settings (
             guild_id BIGINT PRIMARY KEY, channel_id BIGINT, message_id BIGINT)''')
-        await self.bot.db.execute('''CREATE TABLE IF NOT EXISTS palace_arcade_cooldowns (
-            guild_id BIGINT NOT NULL, user_id BIGINT NOT NULL, game TEXT NOT NULL,
-            next_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(guild_id,user_id,game))''')
         self.bot.add_view(self.panel)
         self.maintenance.start()
 
@@ -444,21 +441,6 @@ class PalaceMinigames(commands.Cog):
             raise
         return True
 
-    async def claim_cooldown(self, guild_id, user_id, key):
-        seconds = GAMES[key][1]
-        row = await self.bot.db.fetchrow('''INSERT INTO palace_arcade_cooldowns(guild_id,user_id,game,next_at)
-            VALUES($1,$2,$3,NOW()+($4 * INTERVAL '1 second'))
-            ON CONFLICT(guild_id,user_id,game) DO UPDATE SET next_at=EXCLUDED.next_at
-            WHERE palace_arcade_cooldowns.next_at <= NOW() RETURNING next_at''', guild_id, user_id, key, seconds)
-        if row:
-            return None
-        previous = await self.bot.db.fetchrow('''SELECT next_at FROM palace_arcade_cooldowns
-            WHERE guild_id=$1 AND user_id=$2 AND game=$3''', guild_id, user_id, key)
-        return previous['next_at'] if previous else None
-
-    async def clear_cooldown(self, guild_id, user_id, key):
-        await self.bot.db.execute('''DELETE FROM palace_arcade_cooldowns WHERE guild_id=$1 AND user_id=$2 AND game=$3''', guild_id, user_id, key)
-
     def release(self, guild_id, user_id, view):
         if self.sessions.get((guild_id, user_id)) is view:
             del self.sessions[(guild_id, user_id)]
@@ -471,15 +453,19 @@ class PalaceMinigames(commands.Cog):
         settings = await self.bot.db.fetchrow('SELECT channel_id FROM palace_arcade_settings WHERE guild_id=$1', interaction.guild_id)
         if not settings or interaction.channel_id != settings['channel_id']:
             return await interaction.response.send_message('Use the dedicated arcade channel to play.', ephemeral=True)
-        if (interaction.guild_id, interaction.user.id) in self.sessions:
-            return await interaction.response.send_message('Finish or stop your current game first.', ephemeral=True)
+        # Switching games is allowed immediately. End the previous private session.
+        old_view = self.sessions.get((interaction.guild_id, interaction.user.id))
+        if old_view is not None:
+            old_view.close()
+            if old_view.message is not None:
+                try:
+                    await old_view.message.edit(content='🔄 You switched games. This session is closed.', embed=None, view=old_view)
+                except (discord.HTTPException, discord.NotFound):
+                    pass
         economy = self.economy()
         s = await economy.settings(interaction.guild_id)
         if not s['enabled']:
             return await interaction.response.send_message('The economy is disabled.', ephemeral=True)
-        wait = await self.claim_cooldown(interaction.guild_id, interaction.user.id, key)
-        if wait:
-            return await interaction.response.send_message(f'⏳ Try **{GAMES[key][0]}** again <t:{int(wait.timestamp())}:R>.', ephemeral=True)
         try:
             if key == 'treasure': view = Treasure(self, interaction)
             elif key == 'coinflip': view = CoinFlip(self, interaction)
@@ -492,11 +478,9 @@ class PalaceMinigames(commands.Cog):
                     WHERE guild_id=$1 AND active=TRUE AND category='Plushies'
                     AND (stock IS NULL OR stock>0) ORDER BY item_id LIMIT 25''', interaction.guild_id)
                 if not items:
-                    await self.clear_cooldown(interaction.guild_id, interaction.user.id, key)
                     return await interaction.response.send_message('No plushies are available in the shop yet.', ephemeral=True)
                 view = Claw(self, interaction, items)
             else:
-                await self.clear_cooldown(interaction.guild_id, interaction.user.id, key)
                 return await interaction.response.send_message('Unknown game.', ephemeral=True)
             self.sessions[(interaction.guild_id, interaction.user.id)] = view
             desc = {
@@ -508,7 +492,7 @@ class PalaceMinigames(commands.Cog):
                 'trivia':'Choose a category and answer five questions.',
                 'higherlower':f'Current number: **{view.number}**. Guess higher or lower, or cash out.',
             }[key]
-            await interaction.response.send_message(f'**{GAMES[key][0]}**\n{desc}\n\nSession expires after 15 minutes of inactivity.', view=view, ephemeral=True)
+            await interaction.response.send_message(f'**{GAMES[key][0]}**\n{desc}\n\nYou can switch games at any time using the arcade panel. Session expires after 15 minutes of inactivity.', view=view, ephemeral=True)
             try:
                 view.message = await interaction.original_response()
             except discord.HTTPException:
@@ -516,7 +500,6 @@ class PalaceMinigames(commands.Cog):
         except Exception:
             if 'view' in locals():
                 view.close()
-            await self.clear_cooldown(interaction.guild_id, interaction.user.id, key)
             raise
 
     @app_commands.command(name='arcadesetup', description='Set up or repair the Pillow Palace Arcade panel')
@@ -544,7 +527,7 @@ class PalaceMinigames(commands.Cog):
         embed = discord.Embed(title='🏰 Pillow Palace | Arcade',
             description='Welcome to the Arcade! Select a game below to play **privately** and earn Palace Coins.\n\n'
                         + '\n'.join(f'{name}' for name,_ in GAMES.values())
-                        + '\n\n⏳ Games expire after **15 minutes of inactivity**. Only one active game per player.',
+                        + '\n\n🔄 Switch games anytime using this panel. Games expire after **15 minutes of inactivity**.',
             color=discord.Color.from_rgb(177,135,219))
         embed.set_footer(text='Pillow Palace • Choose a game using the dropdown')
         return embed
