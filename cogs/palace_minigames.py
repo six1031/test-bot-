@@ -505,7 +505,7 @@ class PalaceMinigames(commands.Cog):
                 descriptions[key] = f'Current number: **{view.number}**. Guess higher or lower, or cash out.'
             # Edit the deferred ephemeral response itself so there is no stuck loading message.
             message = await interaction.edit_original_response(
-                f'**{GAMES[key][0]}**\n{descriptions[key]}\n\n'
+                content=f'**{GAMES[key][0]}**\n{descriptions[key]}\n\n'
                 'You can switch games any time from the arcade panel. '
                 'Session expires after 15 minutes of inactivity.',
                 view=view)
